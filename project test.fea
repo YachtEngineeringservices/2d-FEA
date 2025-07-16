@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "geometry": {
+    "outer_points": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        1000.0,
+        0.0
+      ],
+      [
+        1000.0,
+        1000.0
+      ],
+      [
+        0.0,
+        1000.0
+      ]
+    ],
+    "inner_points": [
+      [
+        10.0,
+        10.0
+      ],
+      [
+        990.0,
+        10.0
+      ],
+      [
+        990.0,
+        990.0
+      ],
+      [
+        10.0,
+        990.0
+      ]
+    ]
+  },
+  "parameters": {
+    "mesh_size": "1",
+    "shear_modulus": "80e3",
+    "applied_torque": "1000",
+    "beam_length": "2.0"
+  },
+  "results": {
+    "torsional_constant": "Torsional Constant (J): 2.6176e+06 mm^4",
+    "stiffness": "Torsional Stiffness (k): 1.0470e+05 Nm/rad",
+    "twist_angle": "Angle of Twist (\u03b8): 0.5472 degrees",
+    "max_stress": "Max Shear Stress (\u03c4_max): 7.38 MPa"
+  }
+}

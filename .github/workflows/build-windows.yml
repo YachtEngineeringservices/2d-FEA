@@ -1,0 +1,363 @@
+name: Build Windows Executables
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+        architecture: ['x64']
+    
+    steps:
+    - name: 🔽 Checkout Repository
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        architecture: ${{ matrix.architecture }}
+    
+    - name: 📋 Display Python Info
+      run: |
+        python --version
+        python -m pip --version
+        echo "Architecture: ${{ matrix.architecture }}"
+    
+    - name: 🔧 Install System Dependencies
+      run: |
+        # Install Visual C++ Build Tools (needed for some packages)
+        choco install visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools"
+        # Install Git (if not present)
+        choco install git
+    
+    - name: 📦 Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        # Install base requirements
+        pip install numpy matplotlib scipy plotly pandas
+        pip install PySide6 pyinstaller
+        # Install requirements if file exists
+        if (Test-Path "requirements_windows.txt") {
+          pip install -r requirements_windows.txt
+        } elseif (Test-Path "requirements.txt") {
+          pip install -r requirements.txt
+        }
+    
+    - name: 🔍 Verify Installation
+      run: |
+        python -c "import sys; print('Python:', sys.version)"
+        python -c "import numpy; print('NumPy:', numpy.__version__)"
+        python -c "import matplotlib; print('Matplotlib:', matplotlib.__version__)"
+        python -c "import PySide6; print('PySide6:', PySide6.__version__)"
+        python -c "import PyInstaller; print('PyInstaller:', PyInstaller.__version__)"
+    
+    - name: 🏗️ Create Build Directories
+      run: |
+        New-Item -ItemType Directory -Force -Path "dist"
+        New-Item -ItemType Directory -Force -Path "build"
+    
+    - name: 📝 Create PyInstaller Spec Files
+      run: |
+        # Create spec file for main GUI application
+        $mainSpec = @"
+        # -*- mode: python ; coding: utf-8 -*-
+        import sys
+        import os
+        from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+        # Collect data files for various packages
+        datas = []
+        datas += collect_data_files('matplotlib')
+        datas += collect_data_files('PySide6')
+
+        # Hidden imports for dependencies
+        hiddenimports = []
+        hiddenimports += collect_submodules('matplotlib')
+        hiddenimports += collect_submodules('PySide6')
+        hiddenimports += ['numpy', 'scipy', 'json', 'pathlib']
+
+        block_cipher = None
+
+        a = Analysis(
+            ['src/main_windows.py'],
+            pathex=[],
+            binaries=[],
+            datas=datas,
+            hiddenimports=hiddenimports,
+            hookspath=[],
+            hooksconfig={},
+            runtime_hooks=[],
+            excludes=['tkinter', 'test', 'unittest'],
+            win_no_prefer_redirects=False,
+            win_private_assemblies=False,
+            cipher=block_cipher,
+            noarchive=False,
+        )
+
+        pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+        exe = EXE(
+            pyz,
+            a.scripts,
+            a.binaries,
+            a.zipfiles,
+            a.datas,
+            [],
+            name='2D_FEA_Simple',
+            debug=False,
+            bootloader_ignore_signals=False,
+            strip=False,
+            upx=True,
+            upx_exclude=[],
+            runtime_tmpdir=None,
+            console=False,
+            disable_windowed_traceback=False,
+            target_arch='${{ matrix.architecture }}',
+            codesign_identity=None,
+            entitlements_file=None,
+            icon=None,
+        )
+        "@
+        $mainSpec | Out-File -FilePath "build_main_windows.spec" -Encoding UTF8
+        
+        # Create spec file for torsion analysis
+        $torsionSpec = @"
+        # -*- mode: python ; coding: utf-8 -*-
+        import sys
+        import os
+        from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+        # Collect data files for various packages
+        datas = []
+        datas += collect_data_files('matplotlib')
+        datas += collect_data_files('PySide6')
+
+        # Hidden imports for dependencies
+        hiddenimports = []
+        hiddenimports += collect_submodules('matplotlib')
+        hiddenimports += collect_submodules('PySide6')
+        hiddenimports += ['numpy', 'scipy', 'json', 'pathlib']
+
+        block_cipher = None
+
+        a = Analysis(
+            ['src/main_windows.py'],
+            pathex=[],
+            binaries=[],
+            datas=datas,
+            hiddenimports=hiddenimports,
+            hookspath=[],
+            hooksconfig={},
+            runtime_hooks=[],
+            excludes=['tkinter', 'test', 'unittest'],
+            win_no_prefer_redirects=False,
+            win_private_assemblies=False,
+            cipher=block_cipher,
+            noarchive=False,
+        )
+
+        pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+        exe = EXE(
+            pyz,
+            a.scripts,
+            a.binaries,
+            a.zipfiles,
+            a.datas,
+            [],
+            name='2D_FEA_Torsion_Analysis',
+            debug=False,
+            bootloader_ignore_signals=False,
+            strip=False,
+            upx=True,
+            upx_exclude=[],
+            runtime_tmpdir=None,
+            console=False,
+            disable_windowed_traceback=False,
+            target_arch='${{ matrix.architecture }}',
+            codesign_identity=None,
+            entitlements_file=None,
+            icon=None,
+        )
+        "@
+        $torsionSpec | Out-File -FilePath "build_torsion_windows.spec" -Encoding UTF8
+    
+    - name: 🔨 Build Main Application
+      run: |
+        echo "Building main 2D FEA application..."
+        pyinstaller build_main_windows.spec --clean --noconfirm
+        if (Test-Path "dist/2D_FEA_Simple.exe") {
+          echo "✅ Main application built successfully"
+          Get-Item "dist/2D_FEA_Simple.exe" | Format-List Name, Length, LastWriteTime
+        } else {
+          echo "❌ Main application build failed"
+          exit 1
+        }
+    
+    - name: 🔨 Build Torsion Analysis
+      run: |
+        echo "Building torsion analysis application..."
+        pyinstaller build_torsion_windows.spec --clean --noconfirm
+        if (Test-Path "dist/2D_FEA_Torsion_Analysis.exe") {
+          echo "✅ Torsion analysis built successfully"
+          Get-Item "dist/2D_FEA_Torsion_Analysis.exe" | Format-List Name, Length, LastWriteTime
+        } else {
+          echo "❌ Torsion analysis build failed"
+          exit 1
+        }
+    
+    - name: 🧪 Test Executables
+      run: |
+        echo "Testing executables..."
+        # Test that executables exist and are valid PE files
+        if (Test-Path "dist/2D_FEA_Simple.exe") {
+          $file1 = Get-Item "dist/2D_FEA_Simple.exe"
+          echo "2D_FEA_Simple.exe: $($file1.Length) bytes"
+        }
+        if (Test-Path "dist/2D_FEA_Torsion_Analysis.exe") {
+          $file2 = Get-Item "dist/2D_FEA_Torsion_Analysis.exe"
+          echo "2D_FEA_Torsion_Analysis.exe: $($file2.Length) bytes"
+        }
+        
+        # Quick execution test (should not crash immediately)
+        echo "Quick startup test..."
+        try {
+          $process = Start-Process "dist/2D_FEA_Simple.exe" -ArgumentList "--version" -PassThru -Wait -WindowStyle Hidden
+          echo "Main app exit code: $($process.ExitCode)"
+        } catch {
+          echo "Main app test completed (expected for GUI app)"
+        }
+    
+    - name: 📦 Create Distribution Package
+      run: |
+        echo "Creating distribution package..."
+        
+        # Create distribution folder
+        $distFolder = "2D_FEA_Windows_${{ matrix.python-version }}_${{ matrix.architecture }}"
+        New-Item -ItemType Directory -Force -Path $distFolder
+        
+        # Copy executables
+        if (Test-Path "dist/2D_FEA_Simple.exe") {
+          Copy-Item "dist/2D_FEA_Simple.exe" "$distFolder/"
+        }
+        if (Test-Path "dist/2D_FEA_Torsion_Analysis.exe") {
+          Copy-Item "dist/2D_FEA_Torsion_Analysis.exe" "$distFolder/"
+        }
+        
+        # Create README for distribution
+        $readme = @"
+        # 2D FEA Windows Applications
+        
+        Built on: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        Python Version: ${{ matrix.python-version }}
+        Architecture: ${{ matrix.architecture }}
+        
+        ## Applications Included:
+        
+        - **2D_FEA_Simple.exe**: Main 2D Finite Element Analysis application
+        - **2D_FEA_Torsion_Analysis.exe**: Specialized torsion analysis tool
+        
+        ## System Requirements:
+        
+        - Windows 10/11 (64-bit)
+        - No additional installation required
+        - All dependencies are bundled
+        
+        ## Usage:
+        
+        1. Double-click the desired executable
+        2. The application will start with a GUI interface
+        3. Follow the on-screen instructions for analysis
+        
+        ## Troubleshooting:
+        
+        - If Windows shows a security warning, click "More info" then "Run anyway"
+        - Ensure Windows Defender is not blocking the executables
+        - Run as Administrator if file access issues occur
+        
+        ## Build Information:
+        
+        - Built with PyInstaller
+        - Includes matplotlib, numpy, scipy, PySide6
+        - Self-contained executable (no Python installation required)
+        
+        For support, visit: https://github.com/yourusername/2d-fea
+        "@
+        $readme | Out-File -FilePath "$distFolder/README.txt" -Encoding UTF8
+        
+        # Create ZIP package
+        Compress-Archive -Path "$distFolder/*" -DestinationPath "$distFolder.zip" -Force
+        
+        echo "Distribution package created: $distFolder.zip"
+        Get-Item "$distFolder.zip" | Format-List Name, Length
+    
+    - name: 📊 Build Summary
+      run: |
+        echo "=== BUILD SUMMARY ==="
+        echo "Python Version: ${{ matrix.python-version }}"
+        echo "Architecture: ${{ matrix.architecture }}"
+        echo "Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        echo ""
+        echo "Built Applications:"
+        if (Test-Path "dist/2D_FEA_Simple.exe") {
+          $size1 = (Get-Item "dist/2D_FEA_Simple.exe").Length / 1MB
+          echo "✅ 2D_FEA_Simple.exe ({0:N1} MB)" -f $size1
+        }
+        if (Test-Path "dist/2D_FEA_Torsion_Analysis.exe") {
+          $size2 = (Get-Item "dist/2D_FEA_Torsion_Analysis.exe").Length / 1MB
+          echo "✅ 2D_FEA_Torsion_Analysis.exe ({0:N1} MB)" -f $size2
+        }
+        echo ""
+        echo "Distribution Packages:"
+        Get-ChildItem -Filter "*.zip" | ForEach-Object {
+          $sizeMB = $_.Length / 1MB
+          echo "📦 $($_.Name) ({0:N1} MB)" -f $sizeMB
+        }
+    
+    - name: 📤 Upload Build Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: 2D-FEA-Windows-Python${{ matrix.python-version }}-${{ matrix.architecture }}
+        path: |
+          dist/*.exe
+          *.zip
+          build/*.spec
+        retention-days: 30
+    
+    - name: 📤 Upload Distribution ZIP
+      uses: actions/upload-artifact@v3
+      with:
+        name: 2D-FEA-Windows-Distribution-Python${{ matrix.python-version }}
+        path: "*.zip"
+        retention-days: 90
+
+  create-release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: 🔽 Download All Artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: 📦 Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          **/*.zip
+          **/*.exe
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

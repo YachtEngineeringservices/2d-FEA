@@ -1,0 +1,28 @@
+# Requirements for Windows builds via GitHub Actions
+# Optimized for Windows compatibility and PyInstaller
+
+# Core scientific computing
+numpy>=1.24.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+
+# GUI framework
+PySide6>=6.5.0
+
+# Build tools
+pyinstaller>=5.13.0
+setuptools>=68.0.0
+wheel>=0.41.0
+
+# Optional: Web app components (if building web version)
+streamlit>=1.28.0
+plotly>=5.15.0
+pandas>=2.0.0
+
+# Windows-specific packages for proper builds
+pywin32>=306; sys_platform == "win32"
+pywin32-ctypes>=0.2.2; sys_platform == "win32"
+
+# Note: DOLFINx excluded for GitHub Actions compatibility
+# The Windows builds use simplified analytical solvers
+# For full FEA functionality, use the Linux version with DOLFINx

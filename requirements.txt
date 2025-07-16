@@ -1,0 +1,11 @@
+PySide6
+matplotlib
+gmsh
+meshio
+numpy
+fenics-dolfinx
+ufl
+pyvista
+mpi4py
+petsc4py
+pyinstaller
