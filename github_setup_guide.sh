@@ -17,13 +17,13 @@ echo ""
 
 echo "1️⃣ Create GitHub repository:"
 echo "   Go to: https://github.com/new"
-echo "   Repository name: 2d-fea-app"
+echo "   Repository name: 2d-FEA"
 echo "   Set to Public (for free Actions)"
 echo "   Don't initialize with README (we have one)"
 
 echo ""
 echo "2️⃣ Connect your local repo to GitHub:"
-echo "   git remote add origin https://github.com/yourusername/2d-fea-app.git"
+echo "   git remote add origin https://github.com/YachtEngineeringservices/2d-FEA.git"
 echo "   git branch -M main"
 echo "   git push -u origin main"
 

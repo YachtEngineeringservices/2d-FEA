@@ -36,7 +36,7 @@ git add .
 git commit -m "Initial commit with GitHub Actions"
 
 # Add remote repository (replace with your GitHub repo)
-git remote add origin https://github.com/yourusername/2d-fea.git
+git remote add origin https://github.com/YachtEngineeringservices/2d-FEA.git
 git push -u origin main
 ```
 
