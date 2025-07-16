@@ -1,0 +1,10 @@
+# Files to ignore for Git
+dist/
+build/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.vscode/
+output/
+*.log
