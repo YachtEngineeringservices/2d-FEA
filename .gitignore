@@ -1,10 +1,44 @@
-# Files to ignore for Git
+# Essential files only - keep repository minimal
 dist/
 build/
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 *.egg-info/
-.vscode/
+
+# Output files  
 output/
 *.log
+
+# OS and IDE files
+.DS_Store
+.vscode/
+*.swp
+*.swo
+
+# PyInstaller spec files (generated locally)
+*.spec
+
+# Distribution scripts and helpers (not needed for GitHub)
+build_*.sh
+build_*.bat
+setup_*.sh  
+setup_*.bat
+create_*.sh
+run_*.sh
+run_*.bat
+Launch_*.bat
+
+# Extra documentation (keep only essential)
+detailed*.txt
+*_GUIDE.md
+*_SOLUTIONS.md
+*_OPTIONS.md
+*_COMPLETE.md
+*_Build_Guide.md
+*_QUICK_START.md
+
+# Test files and samples
+*.fea
+test*
