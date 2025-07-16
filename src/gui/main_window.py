@@ -6,7 +6,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QFileDialog, QMessageBox, QTextEdit,
-    QProgressDialog, QTabWidget, QMenuBar, QMenu
+    QProgressDialog, QTabWidget, QMenuBar, QMenu, QListWidget, QListWidgetItem,
+    QSplitter, QGroupBox, QSpinBox, QDoubleSpinBox
 )
 from PySide6.QtGui import QAction
 import dolfinx
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
         self.inner_points = []
         self.active_points_list = self.outer_points # Start with outer selected
         self.current_file_path = None  # Track current saved file
+        self.selected_point_index = -1  # Track selected point for editing
 
         # Create menu bar
         self.create_menu_bar()
@@ -47,10 +49,11 @@ class MainWindow(QMainWindow):
         # --- Plotting Canvas (initialize early) ---
         self.plot_canvas = MplCanvas(self)
         self.plot_canvas.mpl_connect('button_press_event', self.add_point_by_click)
+        self.plot_canvas.mpl_connect('pick_event', self.on_point_pick)
 
         # --- Controls Panel ---
         controls_widget = QWidget()
-        controls_widget.setFixedWidth(400)
+        controls_widget.setFixedWidth(450)  # Increased width for new controls
         controls_layout = QVBoxLayout(controls_widget)
         
         # --- Geometry Input Tabs ---
@@ -122,7 +125,7 @@ class MainWindow(QMainWindow):
         self.on_tab_change(0)
 
     def create_menu_bar(self):
-        """Creates the menu bar with File menu options."""
+        """Creates the menu bar with File and View menu options."""
         menubar = self.menuBar()
         
         # File menu
@@ -174,61 +177,118 @@ class MainWindow(QMainWindow):
         exit_action.setStatusTip('Exit application')
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+        
+        # View menu
+        view_menu = menubar.addMenu('&View')
+        
+        # Reset zoom action
+        reset_zoom_action = QAction('&Reset Zoom', self)
+        reset_zoom_action.setShortcut('Ctrl+0')
+        reset_zoom_action.setStatusTip('Reset plot zoom to fit all geometry')
+        reset_zoom_action.triggered.connect(self.reset_zoom)
+        view_menu.addAction(reset_zoom_action)
+        
+        view_menu.addSeparator()
+        
+        # Plot instructions action
+        plot_help_action = QAction('&Plot Controls Help', self)
+        plot_help_action.setStatusTip('Show help for plot navigation controls')
+        plot_help_action.triggered.connect(self.show_plot_help)
+        view_menu.addAction(plot_help_action)
 
     def create_geometry_tab(self, name):
         """Creates a widget and its controls for a geometry tab."""
         tab_widget = QWidget()
         layout = QVBoxLayout(tab_widget)
         
-        # Point Input
-        layout.addWidget(QLabel(f"<b>Add Point (x, y) [mm] for {name}</b>"))
-        x_input = QLineEdit()
-        x_input.setPlaceholderText("X coordinate")
-        y_input = QLineEdit()
-        y_input.setPlaceholderText("Y coordinate")
-        add_button = QPushButton("Add Point")
+        # Point List and Editing Section
+        points_group = QGroupBox("Points List & Editing")
+        points_layout = QVBoxLayout(points_group)
         
-        point_input_layout = QHBoxLayout()
-        point_input_layout.addWidget(x_input)
-        point_input_layout.addWidget(y_input)
-        layout.addLayout(point_input_layout)
-        layout.addWidget(add_button)
-
-        # Point List Display
-        points_display = QTextEdit()
-        points_display.setReadOnly(True)
-        layout.addWidget(QLabel("Points:"))
-        layout.addWidget(points_display)
+        # Points list widget (replaces QTextEdit)
+        points_list = QListWidget()
+        points_list.setSelectionMode(QListWidget.SingleSelection)
+        points_layout.addWidget(points_list)
+        
+        # Point editing controls
+        edit_layout = QHBoxLayout()
+        edit_x_input = QDoubleSpinBox()
+        edit_x_input.setRange(-99999, 99999)
+        edit_x_input.setDecimals(4)
+        edit_x_input.setSuffix(" mm")
+        edit_y_input = QDoubleSpinBox()
+        edit_y_input.setRange(-99999, 99999)
+        edit_y_input.setDecimals(4)
+        edit_y_input.setSuffix(" mm")
+        update_point_button = QPushButton("Update Point")
+        update_point_button.setEnabled(False)
+        
+        edit_layout.addWidget(QLabel("X:"))
+        edit_layout.addWidget(edit_x_input)
+        edit_layout.addWidget(QLabel("Y:"))
+        edit_layout.addWidget(edit_y_input)
+        edit_layout.addWidget(update_point_button)
+        points_layout.addLayout(edit_layout)
+        
+        # Point reordering controls
+        reorder_layout = QHBoxLayout()
+        move_up_button = QPushButton("Move Up")
+        move_down_button = QPushButton("Move Down")
+        delete_point_button = QPushButton("Delete Point")
+        move_up_button.setEnabled(False)
+        move_down_button.setEnabled(False)
+        delete_point_button.setEnabled(False)
+        
+        reorder_layout.addWidget(move_up_button)
+        reorder_layout.addWidget(move_down_button)
+        reorder_layout.addWidget(delete_point_button)
+        points_layout.addLayout(reorder_layout)
+        
+        layout.addWidget(points_group)
 
         # Action Buttons
+        action_group = QGroupBox("Actions")
+        action_layout = QVBoxLayout(action_group)
+        
         button_layout = QHBoxLayout()
         undo_button = QPushButton("Undo Last")
         clear_button = QPushButton("Clear Geometry")
         button_layout.addWidget(undo_button)
         button_layout.addWidget(clear_button)
-        layout.addLayout(button_layout)
+        action_layout.addLayout(button_layout)
+        layout.addWidget(action_group)
 
-        # Paste Area
-        layout.addWidget(QLabel("Paste Points (x,y per line):"))
+        # Bulk Import Section
+        paste_group = QGroupBox(f"Add Points for {name}")
+        paste_layout = QVBoxLayout(paste_group)
+        paste_layout.addWidget(QLabel("Enter Points (x,y per line or single x,y):"))
         paste_area = QTextEdit()
         paste_area.setFixedHeight(100)
-        paste_button = QPushButton("Add Points from Paste")
-        layout.addWidget(paste_area)
-        layout.addWidget(paste_button)
+        paste_area.setPlaceholderText("Examples:\n10, 20\n30 40\n(50, 60)")
+        paste_button = QPushButton("Add Points")
+        paste_layout.addWidget(paste_area)
+        paste_layout.addWidget(paste_button)
+        layout.addWidget(paste_group)
 
         # Store controls in a dictionary
         controls = {
-            "x_input": x_input, "y_input": y_input, "add_button": add_button,
-            "points_display": points_display, "undo_button": undo_button,
+            "points_list": points_list, "undo_button": undo_button,
             "clear_button": clear_button, "paste_area": paste_area,
-            "paste_button": paste_button
+            "paste_button": paste_button, "edit_x_input": edit_x_input,
+            "edit_y_input": edit_y_input, "update_point_button": update_point_button,
+            "move_up_button": move_up_button, "move_down_button": move_down_button,
+            "delete_point_button": delete_point_button
         }
 
         # Connect signals
-        add_button.clicked.connect(lambda: self.add_point_manually())
         undo_button.clicked.connect(lambda: self.undo_last_point())
         clear_button.clicked.connect(lambda: self.clear_geometry())
         paste_button.clicked.connect(lambda: self.add_points_from_paste())
+        points_list.itemSelectionChanged.connect(lambda: self.on_point_selection_changed())
+        update_point_button.clicked.connect(lambda: self.update_selected_point())
+        move_up_button.clicked.connect(lambda: self.move_point_up())
+        move_down_button.clicked.connect(lambda: self.move_point_down())
+        delete_point_button.clicked.connect(lambda: self.delete_selected_point())
 
         return tab_widget, controls
 
@@ -240,6 +300,10 @@ class MainWindow(QMainWindow):
         else:
             self.active_points_list = self.inner_points
             log.info("Switched to Inner Hole tab.")
+        
+        # Reset selection when switching tabs
+        self.selected_point_index = -1
+        self.update_point_display()
         self.update_plot()
 
     def get_active_controls(self):
@@ -256,23 +320,6 @@ class MainWindow(QMainWindow):
         self.update_point_display()
         self.update_plot()
         self._mark_as_modified()
-
-    def add_point_manually(self):
-        """Adds a point from the QLineEdit inputs."""
-        controls = self.get_active_controls()
-        x_input = controls["x_input"]
-        y_input = controls["y_input"]
-        
-        try:
-            x = float(x_input.text())
-            y = float(y_input.text())
-            self.add_point(x, y)
-            x_input.clear()
-            y_input.clear()
-            x_input.setFocus()
-        except (ValueError, TypeError):
-            log.warning("Invalid manual point input.", exc_info=True)
-            QMessageBox.warning(self, "Input Error", "Please enter valid numbers for coordinates.")
 
     def add_point_by_click(self, event):
         """Adds a point to the list based on a click on the plot."""
@@ -314,11 +361,136 @@ class MainWindow(QMainWindow):
         log.debug("Results labels reset.")
 
     def update_point_display(self):
-        """Updates the QTextEdit for the active tab with the current list of points."""
+        """Updates the QListWidget for the active tab with the current list of points."""
         controls = self.get_active_controls()
-        points_display = controls["points_display"]
-        points_text = "\n".join([f"({p[0]}, {p[1]})" for p in self.active_points_list])
-        points_display.setText(points_text)
+        points_list = controls["points_list"]
+        points_list.clear()
+        
+        for i, (x, y) in enumerate(self.active_points_list):
+            item_text = f"Point {i+1}: ({x}, {y})"
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.UserRole, i)  # Store the index
+            points_list.addItem(item)
+
+    def on_point_selection_changed(self):
+        """Handles selection changes in the points list."""
+        controls = self.get_active_controls()
+        points_list = controls["points_list"]
+        selected_items = points_list.selectedItems()
+        
+        if selected_items:
+            item = selected_items[0]
+            self.selected_point_index = item.data(Qt.UserRole)
+            x, y = self.active_points_list[self.selected_point_index]
+            
+            # Update edit controls
+            controls["edit_x_input"].setValue(x)
+            controls["edit_y_input"].setValue(y)
+            
+            # Enable editing buttons
+            controls["update_point_button"].setEnabled(True)
+            controls["move_up_button"].setEnabled(self.selected_point_index > 0)
+            controls["move_down_button"].setEnabled(self.selected_point_index < len(self.active_points_list) - 1)
+            controls["delete_point_button"].setEnabled(True)
+            
+            # Highlight the selected point in the plot
+            self.update_plot()
+        else:
+            self.selected_point_index = -1
+            # Disable editing buttons
+            controls["update_point_button"].setEnabled(False)
+            controls["move_up_button"].setEnabled(False)
+            controls["move_down_button"].setEnabled(False)
+            controls["delete_point_button"].setEnabled(False)
+
+    def update_selected_point(self):
+        """Updates the coordinates of the selected point."""
+        if self.selected_point_index >= 0:
+            controls = self.get_active_controls()
+            new_x = controls["edit_x_input"].value()
+            new_y = controls["edit_y_input"].value()
+            
+            old_point = self.active_points_list[self.selected_point_index]
+            self.active_points_list[self.selected_point_index] = (new_x, new_y)
+            
+            log.info(f"Point {self.selected_point_index + 1} updated from {old_point} to ({new_x}, {new_y})")
+            
+            self.update_point_display()
+            self.update_plot()
+            self._mark_as_modified()
+
+    def move_point_up(self):
+        """Moves the selected point up in the list (earlier in the order)."""
+        if self.selected_point_index > 0:
+            # Swap with previous point
+            idx = self.selected_point_index
+            self.active_points_list[idx], self.active_points_list[idx-1] = \
+                self.active_points_list[idx-1], self.active_points_list[idx]
+            
+            # Update selection
+            self.selected_point_index = idx - 1
+            
+            log.info(f"Point moved up to position {self.selected_point_index + 1}")
+            
+            self.update_point_display()
+            self.update_plot()
+            self._mark_as_modified()
+            
+            # Reselect the moved point
+            controls = self.get_active_controls()
+            points_list = controls["points_list"]
+            points_list.setCurrentRow(self.selected_point_index)
+
+    def move_point_down(self):
+        """Moves the selected point down in the list (later in the order)."""
+        if self.selected_point_index < len(self.active_points_list) - 1:
+            # Swap with next point
+            idx = self.selected_point_index
+            self.active_points_list[idx], self.active_points_list[idx+1] = \
+                self.active_points_list[idx+1], self.active_points_list[idx]
+            
+            # Update selection
+            self.selected_point_index = idx + 1
+            
+            log.info(f"Point moved down to position {self.selected_point_index + 1}")
+            
+            self.update_point_display()
+            self.update_plot()
+            self._mark_as_modified()
+            
+            # Reselect the moved point
+            controls = self.get_active_controls()
+            points_list = controls["points_list"]
+            points_list.setCurrentRow(self.selected_point_index)
+
+    def delete_selected_point(self):
+        """Deletes the selected point from the list."""
+        if self.selected_point_index >= 0:
+            deleted_point = self.active_points_list.pop(self.selected_point_index)
+            log.info(f"Deleted point {self.selected_point_index + 1}: {deleted_point}")
+            
+            # Adjust selection
+            if self.selected_point_index >= len(self.active_points_list):
+                self.selected_point_index = len(self.active_points_list) - 1
+            
+            self.update_point_display()
+            self.update_plot()
+            self._mark_as_modified()
+            
+            # Clear selection if no points left
+            if not self.active_points_list:
+                self.selected_point_index = -1
+
+    def on_point_pick(self, event):
+        """Handles clicking on points in the plot for selection."""
+        if hasattr(event, 'ind') and event.ind is not None:
+            # Get the index of the clicked point
+            point_idx = event.ind[0]
+            if 0 <= point_idx < len(self.active_points_list):
+                controls = self.get_active_controls()
+                points_list = controls["points_list"]
+                points_list.setCurrentRow(point_idx)
+                log.debug(f"Point {point_idx + 1} selected via plot click")
 
     def update_plot(self, phi=None, V=None):
         """Redraws the geometry or plots the stress function contour."""
@@ -326,7 +498,10 @@ class MainWindow(QMainWindow):
         if phi is not None and V is not None:
             self.plot_canvas.plot_contour(phi, V)
         else:
-            self.plot_canvas.plot_polygons(self.outer_points, self.inner_points)
+            # Determine which points list is active
+            active_is_outer = (self.geom_tabs.currentIndex() == 0)
+            self.plot_canvas.plot_polygons(self.outer_points, self.inner_points, 
+                                         self.selected_point_index, active_is_outer)
         log.debug("Plot updated.")
 
     def add_points_from_paste(self):
@@ -646,6 +821,38 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Failed to export results:\n{str(e)}")
                 log.error(f"Failed to export results: {e}")
+
+    def reset_zoom(self):
+        """Resets the plot zoom to fit all geometry."""
+        self.plot_canvas.reset_view()
+        log.debug("Plot zoom reset to fit all geometry")
+
+    def show_plot_help(self):
+        """Shows help dialog for plot navigation controls."""
+        help_text = """
+Plot Navigation Controls:
+
+🖱️ Mouse Controls:
+• Mouse Wheel: Zoom in/out centered on cursor
+• Right-click + Drag: Pan around the plot
+• Left-click: Add new point to active geometry
+• Click on Point: Select point for editing
+
+⌨️ Keyboard Shortcuts:
+• Ctrl+0: Reset zoom to fit all geometry
+
+✏️ Point Editing:
+• Select points from the list or by clicking
+• Use the edit controls to modify coordinates
+• Use Move Up/Down to reorder points
+• Delete points with the Delete button
+
+📐 Tips:
+• Point order determines the shape boundary
+• Use zoom to precisely position points
+• Right-click drag to pan when zoomed in
+"""
+        QMessageBox.information(self, "Plot Controls Help", help_text)
 
     def _mark_as_modified(self):
         """Marks the project as modified by adding an asterisk to the title."""
