@@ -1,6 +1,7 @@
 """
 Streamlit Web Application for 2D FEA Torsion Analysis
 This version runs in any web browser and doesn't require Linux/WSL
+Optimized for Streamlit Cloud deployment
 """
 
 import streamlit as st
@@ -12,17 +13,58 @@ from typing import List, Tuple, Dict, Any
 import tempfile
 import os
 
+# Set matplotlib backend for cloud environment
+import matplotlib
+matplotlib.use('Agg')
+
 # Configure page
 st.set_page_config(
-    page_title="2D FEA Torsion Analysis",
+    page_title="2D FEA Torsion Analysis - Yacht Engineering Services",
     page_icon="🔧",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://github.com/YachtEngineeringservices/2d-FEA',
+        'Report a bug': 'https://github.com/YachtEngineeringservices/2d-FEA/issues',
+        'About': '''
+        # 2D FEA Torsion Analysis
+        
+        Web-based Finite Element Analysis for Torsional Problems
+        
+        **Developed by Yacht Engineering Services**
+        
+        This application provides simplified torsional analysis using analytical methods,
+        making it accessible in any web browser without requiring specialized software.
+        '''
+    }
 )
 
 # Title and description
 st.title("🔧 2D FEA Torsion Analysis")
 st.markdown("**Web-based Finite Element Analysis for Torsional Problems**")
+st.markdown("*Developed by Yacht Engineering Services*")
+
+# Add information about the application
+with st.expander("ℹ️ About This Application"):
+    st.markdown("""
+    This web application provides **simplified 2D torsional analysis** using analytical methods.
+    
+    **Features:**
+    - ✅ Interactive geometry input
+    - ✅ Real-time visualization  
+    - ✅ Analytical torsional calculations
+    - ✅ Stress and displacement analysis
+    - ✅ Results export
+    
+    **Perfect for:**
+    - Quick engineering estimates
+    - Educational purposes
+    - Preliminary design validation
+    
+    For advanced FEA with DOLFINx, download the desktop application from 
+    [GitHub](https://github.com/YachtEngineeringservices/2d-FEA).
+    """)
+
 st.markdown("---")
 
 # Initialize session state
@@ -327,7 +369,16 @@ def run_simplified_fea(points: List[List[float]], material: Dict[str, float],
 
 # Footer
 st.markdown("---")
-st.markdown("**2D FEA Torsion Analysis** - Web Version | Built with Streamlit")
+st.markdown("""
+<div style='text-align: center; color: #666; padding: 20px;'>
+    <p><strong>2D FEA Torsion Analysis</strong> - Web Version</p>
+    <p>Developed by <strong>Yacht Engineering Services</strong> | Built with Streamlit</p>
+    <p>
+        <a href='https://github.com/YachtEngineeringservices/2d-FEA' target='_blank'>GitHub Repository</a> | 
+        <a href='https://github.com/YachtEngineeringservices/2d-FEA/releases' target='_blank'>Desktop Version</a>
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
 # Download results
 if st.session_state.results:

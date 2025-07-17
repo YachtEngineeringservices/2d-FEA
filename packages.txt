@@ -1,0 +1,6 @@
+# System packages needed for Streamlit Cloud
+# Minimal dependencies for web-based 2D FEA
+
+# For matplotlib
+libgl1-mesa-glx
+libglib2.0-0
