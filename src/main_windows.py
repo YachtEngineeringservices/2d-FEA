@@ -45,12 +45,15 @@ def show_platform_info():
 
 def main():
     """Main application entry point"""
-    try:
-        # Create QApplication
+    # Create QApplication first, before any other Qt operations
+    app = QApplication.instance()
+    if app is None:
         app = QApplication(sys.argv)
-        app.setApplicationName("2D FEA Torsion Analysis")
-        app.setApplicationVersion("1.0 Windows Edition")
-        
+    
+    app.setApplicationName("2D FEA Torsion Analysis")
+    app.setApplicationVersion("1.0 Windows Edition")
+    
+    try:
         # Show platform information
         show_platform_info()
         
@@ -68,9 +71,8 @@ def main():
         
     except ImportError as e:
         # Handle missing dependencies
-        error_msg = f"Missing dependency: {e}\n\nPlease install required packages:\npip install PySide6 matplotlib numpy gmsh meshio h5py"
+        error_msg = f"Missing dependency: {e}\n\nPlease install required packages:\npip install PySide6 matplotlib numpy gmsh meshio h5py pyvista"
         
-        app = QApplication(sys.argv)
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Critical)
         msg.setWindowTitle("Missing Dependencies")
@@ -85,7 +87,6 @@ def main():
         # Handle other errors
         logging.error(f"Application error: {e}")
         
-        app = QApplication(sys.argv)
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Critical)
         msg.setWindowTitle("Application Error")

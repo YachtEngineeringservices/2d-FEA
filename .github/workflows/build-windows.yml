@@ -38,7 +38,7 @@ jobs:
         # Install core dependencies
         pip install numpy matplotlib scipy plotly
         pip install PySide6 pyinstaller
-        pip install gmsh meshio h5py
+        pip install gmsh meshio h5py pyvista vtk
         
         # Install additional requirements if they exist
         if (Test-Path "requirements_windows.txt") {
@@ -57,6 +57,7 @@ jobs:
         python -c "import gmsh; print('GMSH available')"
         python -c "import meshio; print('MeshIO:', meshio.__version__)"
         python -c "import h5py; print('h5py:', h5py.__version__)"
+        python -c "import pyvista; print('PyVista:', pyvista.__version__)"
     
     - name: 🏗️ Create Build Directories
       run: |
@@ -81,7 +82,9 @@ jobs:
         hiddenimports = []
         hiddenimports += collect_submodules('matplotlib')
         hiddenimports += collect_submodules('PySide6')
-        hiddenimports += ['numpy', 'scipy', 'json', 'pathlib', 'gmsh', 'meshio', 'h5py']
+        hiddenimports += collect_submodules('pyvista')
+        hiddenimports += collect_submodules('vtk')
+        hiddenimports += ['numpy', 'scipy', 'json', 'pathlib', 'gmsh', 'meshio', 'h5py', 'pyvista', 'vtk']
 
         block_cipher = None
 
