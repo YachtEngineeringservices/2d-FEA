@@ -10,6 +10,7 @@ try:
 except ImportError:
     griddata = None
 
+
 class MplCanvas(FigureCanvas):
     """
     A custom Matplotlib canvas widget for PySide6 with zoom and pan capabilities.
@@ -123,24 +124,18 @@ class MplCanvas(FigureCanvas):
         if len(inner_points_mm) < 3:
             return []
         
-        # Convert to numpy array for easier manipulation
-        points = np.array(inner_points_mm)
+        # For the U-shaped geometry, the points should already be in the correct order
+        # Don't sort them as that creates a convex hull which loses the concave U-shape
+        points = inner_points_mm.copy()
         
-        # Calculate centroid
-        centroid = np.mean(points, axis=0)
-        
-        # Calculate angles from centroid to each point
-        angles = np.arctan2(points[:, 1] - centroid[1], points[:, 0] - centroid[0])
-        
-        # Sort points by angle to create a proper polygon
-        sorted_indices = np.argsort(angles)
-        sorted_points = points[sorted_indices]
+        # Ensure the polygon is closed (first point = last point)
+        if points[0] != points[-1]:
+            points.append(points[0])
         
         print(f"Debug: Original points: {inner_points_mm}")
-        print(f"Debug: Centroid: {centroid}")
-        print(f"Debug: Sorted polygon: {sorted_points.tolist()}")
+        print(f"Debug: Using original point order (preserving U-shape): {points[:5]}..." if len(points) > 5 else f"Debug: Polygon: {points}")
         
-        return sorted_points.tolist()
+        return points
     
     def _mask_holes(self, xi, yi, zi, inner_points_list):
         """Mask areas inside holes (inner polygons) by setting them to NaN."""
@@ -181,7 +176,8 @@ class MplCanvas(FigureCanvas):
         """Plots the geometric polygons, showing the outer and inner shapes with optional point highlighting."""
         self.axes.clear()
         
-        # Store current points for hole masking
+        # Store current points for masking
+        self.current_outer_points = outer_points if outer_points else []
         self.current_inner_points = inner_points if inner_points else []
         
         if not outer_points:
@@ -244,23 +240,34 @@ class MplCanvas(FigureCanvas):
 
 
     def plot_contour(self, tau_magnitude, V_mag, inner_points=None):
-        """Plots the contour of the shear stress magnitude with proper hole masking."""
+        """Plots the contour of the shear stress magnitude with proper boundary and hole masking."""
         self.axes.clear()
+        
+        # Clear any existing colorbars to prevent stacking
+        # Remove all colorbars from the figure
+        for ax in self.fig.get_axes():
+            if ax != self.axes:  # Don't remove the main plotting axes
+                ax.remove()
         
         # Store inner points for hole masking
         if inner_points is not None:
             self.current_inner_points = inner_points
         elif not hasattr(self, 'current_inner_points'):
             self.current_inner_points = []
+        
+        # Ensure we have outer points stored
+        if not hasattr(self, 'current_outer_points'):
+            self.current_outer_points = []
 
         try:
             # Get mesh coordinates and stress values
             coords = V_mag.tabulate_dof_coordinates()
             stress_values = tau_magnitude.x.array / 1e6  # Convert to MPa
             
-            print(f"Debug: Using triangulation approach with hole masking")
+            print(f"Debug: Using triangulation with boundary and hole masking")
             print(f"Debug: {len(coords)} coordinates, {len(stress_values)} stress values")
-            print(f"Debug: Inner points: {len(self.current_inner_points) if self.current_inner_points else 0}")
+            print(f"Debug: Outer boundary points: {len(self.current_outer_points) if self.current_outer_points else 0}")
+            print(f"Debug: Inner hole points: {len(self.current_inner_points) if self.current_inner_points else 0}")
             
             # Create matplotlib triangulation
             import matplotlib.tri as tri
@@ -270,57 +277,110 @@ class MplCanvas(FigureCanvas):
             # Create triangulation
             triang = tri.Triangulation(x, y)
             
-            # If we have holes, mask triangles that are inside holes
-            if self.current_inner_points:
+            # Mask triangles - start with no masking
+            mask = np.zeros(len(triang.triangles), dtype=bool)
+            total_masked = 0
+            
+            # Calculate triangle centers for masking
+            tri_centers_x = x[triang.triangles].mean(axis=1)
+            tri_centers_y = y[triang.triangles].mean(axis=1)
+            
+            print(f"Debug: Triangle center range: X={tri_centers_x.min():.1f}-{tri_centers_x.max():.1f}, Y={tri_centers_y.min():.1f}-{tri_centers_y.max():.1f}")
+            
+            # 1. Mask triangles OUTSIDE the outer boundary
+            if self.current_outer_points and len(self.current_outer_points) >= 3:
+                print("Debug: Masking triangles outside outer boundary...")
+                # Convert outer points to mm
+                outer_points_mm = []
+                for px, py in self.current_outer_points:
+                    if abs(px) < 1.0 and abs(py) < 1.0:
+                        outer_points_mm.append((px * 1000, py * 1000))
+                    else:
+                        outer_points_mm.append((px, py))
+                
+                # Create proper closed polygon
+                outer_polygon = self._create_hole_polygon(outer_points_mm)
+                print(f"Debug: Outer boundary polygon: {outer_polygon[:3]}..." if len(outer_polygon) > 3 else f"Debug: Outer boundary polygon: {outer_polygon}")
+                
+                if outer_polygon:
+                    for i, (cx, cy) in enumerate(zip(tri_centers_x, tri_centers_y)):
+                        if not self._point_in_polygon(cx, cy, outer_polygon):
+                            mask[i] = True
+                            total_masked += 1
+                    print(f"Debug: Masked {total_masked} triangles outside outer boundary")
+            
+            # 2. Mask triangles INSIDE holes
+            if self.current_inner_points and len(self.current_inner_points) >= 3:
                 print("Debug: Masking triangles inside holes...")
-                # Convert inner points to mm - but check if they're already in mm or meters
-                # The inner_points from DOLFINx are in meters, but we need mm for plotting
+                # Convert inner points to mm
                 inner_points_mm = []
                 for px, py in self.current_inner_points:
-                    # Check if points seem to be in meters (small values) or already in mm
                     if abs(px) < 1.0 and abs(py) < 1.0:
-                        # Points are in meters, convert to mm
                         inner_points_mm.append((px * 1000, py * 1000))
                     else:
-                        # Points are already in mm scale
                         inner_points_mm.append((px, py))
                 
-                print(f"Debug: Input inner points: {self.current_inner_points}")
-                print(f"Debug: Converted to mm: {inner_points_mm}")
-                print(f"Debug: Mesh coordinate range: X={x.min():.1f}-{x.max():.1f}, Y={y.min():.1f}-{y.max():.1f}")
-                
-                # Create proper closed polygon from the points
+                # Create proper closed polygon
                 hole_polygon = self._create_hole_polygon(inner_points_mm)
+                print(f"Debug: Hole polygon: {hole_polygon}")
                 
                 if hole_polygon:
-                    # Calculate triangle centers
-                    tri_centers_x = x[triang.triangles].mean(axis=1)
-                    tri_centers_y = y[triang.triangles].mean(axis=1)
-                    
-                    # Debug: Show some triangle centers
-                    print(f"Debug: Sample triangle centers: {list(zip(tri_centers_x[:5], tri_centers_y[:5]))}")
-                    
-                    # Mask triangles whose centers are inside holes
-                    mask = np.zeros(len(triang.triangles), dtype=bool)
-                    masked_count = 0
+                    hole_masked = 0
                     for i, (cx, cy) in enumerate(zip(tri_centers_x, tri_centers_y)):
-                        if self._point_in_polygon(cx, cy, hole_polygon):
+                        if not mask[i] and self._point_in_polygon(cx, cy, hole_polygon):
                             mask[i] = True
-                            masked_count += 1
-                            if masked_count <= 5:  # Show first few masked triangles
-                                print(f"Debug: Masking triangle {i} at center ({cx:.1f}, {cy:.1f})")
-                    
-                    triang.set_mask(mask)
-                    print(f"Debug: Masked {np.sum(mask)} triangles out of {len(mask)}")
-                else:
-                    print("Debug: Could not create hole polygon from points")
+                            hole_masked += 1
+                    total_masked += hole_masked
+                    print(f"Debug: Masked {hole_masked} triangles inside holes")
             
-            # Create smooth filled contour plot
-            levels = np.linspace(stress_values.min(), stress_values.max(), 50)
-            contour = self.axes.tricontourf(triang, stress_values, levels=levels, cmap='jet', extend='both')
+            print(f"Debug: Total masked triangles: {total_masked} out of {len(mask)}")
+            
+            # Apply the mask by creating a new triangulation with only unmasked triangles
+            if np.any(mask):
+                print(f"Debug: Filtering triangulation to remove masked triangles")
+                
+                # Get unmasked triangles
+                unmasked_triangles = triang.triangles[~mask]
+                
+                # Find which nodes are still needed
+                used_nodes = np.unique(unmasked_triangles.flatten())
+                
+                # Create mapping from old node indices to new indices
+                node_map = {old_idx: new_idx for new_idx, old_idx in enumerate(used_nodes)}
+                
+                # Create new coordinates and stress arrays with only used nodes
+                new_x = x[used_nodes]
+                new_y = y[used_nodes]
+                new_stress = stress_values[used_nodes]
+                
+                # Remap triangle node indices
+                new_triangles = np.array([[node_map[old_idx] for old_idx in triangle] 
+                                        for triangle in unmasked_triangles])
+                
+                # Create new triangulation with filtered data
+                import matplotlib.tri as tri
+                triang = tri.Triangulation(new_x, new_y, new_triangles)
+                plot_stress = new_stress
+                
+                print(f"Debug: Filtered to {len(new_x)} nodes and {len(new_triangles)} triangles")
+            else:
+                plot_stress = stress_values
+            
+            # Create stress visualization using tripcolor (respects exact triangulation)
+            # tripcolor shows exactly the triangles we provide, no interpolation
+            print(f"Debug: About to plot with tripcolor - triangulation has {len(triang.x)} vertices, {len(triang.triangles)} triangles")
+            print(f"Debug: X range: {triang.x.min():.1f} to {triang.x.max():.1f}")
+            print(f"Debug: Y range: {triang.y.min():.1f} to {triang.y.max():.1f}")
+            print(f"Debug: Stress range: {plot_stress.min():.3f} to {plot_stress.max():.3f}")
+            
+            contour = self.axes.tripcolor(triang, plot_stress, shading='gouraud', cmap='jet')
             
             # Add contour lines for better definition
-            contour_lines = self.axes.tricontour(triang, stress_values, levels=levels[::5], colors='black', alpha=0.3, linewidths=0.5)
+            try:
+                levels = np.linspace(plot_stress.min(), plot_stress.max(), 10)
+                contour_lines = self.axes.tricontour(triang, plot_stress, levels=levels, colors='black', alpha=0.3, linewidths=0.5)
+            except:
+                print("Debug: Skipped contour lines due to triangulation issues")
             
             # Add colorbar with better formatting
             cbar = self.fig.colorbar(contour, ax=self.axes, shrink=0.8, pad=0.02)
