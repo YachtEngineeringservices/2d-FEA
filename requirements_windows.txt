@@ -15,6 +15,7 @@ vtk>=9.3.0
 
 # Build tools
 pyinstaller>=5.13.0
+cx_Freeze>=6.15.0
 setuptools>=68.0.0
 wheel>=0.41.0
 
