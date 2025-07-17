@@ -85,13 +85,12 @@ jobs:
         # Files to include
         include_files = []
         
-        # Build options
+        # Build options (removed include_msvcrt - not supported)
         build_exe_options = {
             'packages': packages,
             'include_files': include_files,
             'excludes': ['tkinter', 'test', 'unittest', 'distutils'],
             'optimize': 2,
-            'include_msvcrt': True,
         }
         
         # MSI options
@@ -99,16 +98,14 @@ jobs:
             'upgrade_code': '{12345678-1234-5678-9012-123456789012}',
             'add_to_path': False,
             'initial_target_dir': r'[ProgramFilesFolder]\2D FEA',
-            'install_icon': None,
         }
         
         # Executable configuration
         executables = [
             Executable(
                 'src/main_windows.py',
-                base='Win32GUI',  # This creates a Windows GUI app (no console)
+                base='Win32GUI',
                 target_name='2D_FEA.exe',
-                icon=None,
                 shortcut_name='2D FEA Torsion Analysis',
                 shortcut_dir='ProgramMenuFolder',
             )
