@@ -21,7 +21,7 @@ try:
 except ImportError as e:
     # If DOLFINx is not available, use Windows-compatible solver
     try:
-        from fea import solver_windows as solver
+        from fea import solver_windows
         SOLVER_TYPE = "simplified"
         print(f"Note: Using simplified solver due to missing dependencies: {e}")
     except ImportError:
@@ -29,7 +29,7 @@ except ImportError as e:
         class DummySolver:
             def solve_torsion(self, *args, **kwargs):
                 return {"error": True, "message": "No solver available"}
-        solver = DummySolver()
+        solver_windows = DummySolver()
         SOLVER_TYPE = "dummy"
         print("Warning: No solver available - GUI only mode")
 
@@ -674,8 +674,49 @@ class MainWindow(QMainWindow):
             if progress.wasCanceled():
                 raise InterruptedError("Analysis cancelled by user.")
 
-            J, k, theta, tau_max, tau_magnitude, V_mag = solver.solve_torsion(mesh_dir, G_Pa, T_Nm, L_beam_m)
-            log.info(f"Solver finished. J={J:.4e}, k={k:.4e}, theta={theta:.4e}, tau_max={tau_max:.4e}")
+            # Handle different solver types
+            if SOLVER_TYPE == "full":
+                # Full DOLFINx solver - returns tuple
+                J, k, theta, tau_max, tau_magnitude, V_mag = solver.solve_torsion(mesh_dir, G_Pa, T_Nm, L_beam_m)
+                log.info(f"Full solver finished. J={J:.4e}, k={k:.4e}, theta={theta:.4e}, tau_max={tau_max:.4e}")
+                
+            elif SOLVER_TYPE == "simplified":
+                # Simplified solver - create instance and call method, returns dict
+                simplified_solver = solver_windows.SimplifiedSolver()
+                
+                # Convert inputs to simplified solver format
+                mesh_file = os.path.join(mesh_dir, "mesh.msh")
+                if not os.path.exists(mesh_file):
+                    # Try domain.xdmf if mesh.msh doesn't exist
+                    mesh_file = os.path.join(mesh_dir, "domain.xdmf")
+                    
+                material_props = {
+                    'shear_modulus': G_Pa,
+                    'density': 7850  # Default steel density
+                }
+                
+                # Calculate twist angle from torque: theta = T*L/(G*J)
+                # For initial estimate, assume circular cross-section
+                results = simplified_solver.solve_torsion(mesh_file, material_props, T_Nm / (G_Pa * 1e-6))
+                
+                if 'error' in results:
+                    raise RuntimeError(f"Simplified solver error: {results.get('message', 'Unknown error')}")
+                
+                # Extract results from dictionary and convert to tuple format
+                J = results.get('polar_moment', 0)
+                k = G_Pa * J / L_beam_m  # Calculate stiffness
+                theta = T_Nm / k if k > 0 else 0  # Calculate twist angle
+                tau_max = results.get('max_shear_stress', 0)
+                
+                # For plotting, create dummy data since we don't have DOLFINx functions
+                tau_magnitude = None
+                V_mag = None
+                
+                log.info(f"Simplified solver finished. J={J:.4e}, k={k:.4e}, theta={theta:.4e}, tau_max={tau_max:.4e}")
+                
+            else:
+                # Dummy solver
+                raise RuntimeError("No solver available - cannot perform analysis")
 
             # 3. Updating GUI
             progress.setValue(3)
@@ -691,8 +732,12 @@ class MainWindow(QMainWindow):
             self.twist_angle_label.setText(f"Angle of Twist (θ): {np.rad2deg(theta):.4f} degrees")
             self.max_stress_label.setText(f"Max Shear Stress (τ_max): {tau_max/1e6:.2f} MPa")
 
-            # 4. Update plot with contour of shear stress
-            self.update_plot(tau_magnitude, V_mag)
+            # 4. Update plot with contour of shear stress (if available)
+            if SOLVER_TYPE == "full" and tau_magnitude is not None:
+                self.update_plot(tau_magnitude, V_mag)
+            else:
+                # For simplified solver, just update the geometry plot
+                self.update_plot()
             
             progress.setValue(4) # Finish
             log.info("Analysis run completed successfully.")
