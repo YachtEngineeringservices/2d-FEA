@@ -70,8 +70,26 @@ def run_simplified_fea(outer_points, inner_points, G, T, L):
             centroid = np.mean(outer_pts, axis=0)
             distances = np.sqrt(np.sum((outer_pts - centroid)**2, axis=1))
             r_max = np.max(distances)
+            
+            # Calculate stress at each point for visualization
+            stress_at_points = []
+            for point in outer_pts:
+                r = np.sqrt(np.sum((point - centroid)**2))
+                tau = T * r / J if J > 0 else 0
+                stress_at_points.append(tau)
+            
+            # Also calculate stress for inner points if they exist
+            inner_stress_at_points = []
+            if inner_points:
+                inner_pts = np.array(inner_points)
+                for point in inner_pts:
+                    r = np.sqrt(np.sum((point - centroid)**2))
+                    tau = T * r / J if J > 0 else 0
+                    inner_stress_at_points.append(tau)
         else:
             r_max = 1.0
+            stress_at_points = []
+            inner_stress_at_points = []
         
         tau_max = T * r_max / J
         
@@ -80,6 +98,8 @@ def run_simplified_fea(outer_points, inner_points, G, T, L):
             'stiffness': k,
             'twist_angle': theta,
             'max_shear_stress': tau_max,
+            'outer_stress_values': stress_at_points,
+            'inner_stress_values': inner_stress_at_points,
             'success': True
         }
         
@@ -90,6 +110,8 @@ def run_simplified_fea(outer_points, inner_points, G, T, L):
             'stiffness': 0, 
             'twist_angle': 0,
             'max_shear_stress': 0,
+            'outer_stress_values': [],
+            'inner_stress_values': [],
             'success': False
         }
 
@@ -453,56 +475,159 @@ Format 3 (space-separated):
             )
 
 with col2:
-    st.header("📈 Cross-Section Geometry")
+    # Switch between geometry and results view
+    if st.session_state.results:
+        view_tab = st.radio("View:", ["Geometry", "Stress Results"], horizontal=True)
+    else:
+        view_tab = "Geometry"
+        
+    if view_tab == "Geometry":
+        st.header("📈 Cross-Section Geometry")
+    else:
+        st.header("🌡️ Stress Distribution")
     
     # Create the plot
     fig, ax = plt.subplots(figsize=(10, 8))
     
+    # Check if we should show stress results
+    show_stress = (view_tab == "Stress Results" and 
+                   st.session_state.results and 
+                   st.session_state.results['success'])
+    
     # Plot outer shape
     if len(st.session_state.outer_points) >= 3:
         outer_array = np.array(st.session_state.outer_points)
-        outer_polygon = Polygon(outer_array, alpha=0.3, facecolor='lightblue', 
-                               edgecolor='blue', linewidth=2, label='Outer Shape')
-        ax.add_patch(outer_polygon)
         
-        # Plot outer points
-        ax.scatter(outer_array[:, 0], outer_array[:, 1], c='blue', s=100, zorder=5)
-        
-        # Label outer points
-        for i, (x, y) in enumerate(outer_array):
-            ax.annotate(f'{i+1}', (x, y), xytext=(5, 5), textcoords='offset points',
-                       fontsize=10, fontweight='bold', color='blue')
+        if show_stress:
+            # Plot with stress coloring - Create a proper stress distribution
+            stress_values = st.session_state.results['outer_stress_values']
+            stress_mpa = [s / 1e6 for s in stress_values]  # Convert to MPa
+            
+            # Create a filled contour plot for stress distribution
+            from scipy.interpolate import griddata
+            
+            # Create a grid for interpolation
+            x_min, x_max = np.min(outer_array[:, 0]) - 10, np.max(outer_array[:, 0]) + 10
+            y_min, y_max = np.min(outer_array[:, 1]) - 10, np.max(outer_array[:, 1]) + 10
+            
+            # Create grid
+            xi = np.linspace(x_min, x_max, 100)
+            yi = np.linspace(y_min, y_max, 100)
+            XI, YI = np.meshgrid(xi, yi)
+            
+            # Interpolate stress values
+            ZI = griddata((outer_array[:, 0], outer_array[:, 1]), stress_mpa, (XI, YI), method='cubic', fill_value=0)
+            
+            # Create a mask for the polygon area
+            from matplotlib.path import Path
+            polygon_path = Path(outer_array)
+            points = np.column_stack((XI.ravel(), YI.ravel()))
+            mask = polygon_path.contains_points(points).reshape(XI.shape)
+            
+            # Apply mask to stress data
+            ZI_masked = np.where(mask, ZI, np.nan)
+            
+            # Create filled contour plot
+            contour = ax.contourf(XI, YI, ZI_masked, levels=20, cmap='viridis', alpha=0.8)
+            
+            # Add colorbar
+            cbar = plt.colorbar(contour, ax=ax, label='Shear Stress (MPa)')
+            
+            # Plot polygon outline
+            outer_polygon = Polygon(outer_array, fill=False, edgecolor='white', linewidth=3)
+            ax.add_patch(outer_polygon)
+            
+            # Plot stress at points with values
+            scatter = ax.scatter(outer_array[:, 0], outer_array[:, 1], 
+                               c=stress_mpa, s=150, cmap='viridis', 
+                               edgecolor='white', linewidth=2, zorder=5)
+            
+            # Label points with stress values
+            for i, ((x, y), stress) in enumerate(zip(outer_array, stress_mpa)):
+                ax.annotate(f'{i+1}\n{stress:.1f}', (x, y), xytext=(5, 5), 
+                           textcoords='offset points', fontsize=9, 
+                           fontweight='bold', color='white',
+                           bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7))
+        else:
+            # Regular geometry view
+            outer_polygon = Polygon(outer_array, alpha=0.3, facecolor='lightblue', 
+                                   edgecolor='blue', linewidth=2, label='Outer Shape')
+            ax.add_patch(outer_polygon)
+            
+            # Plot outer points
+            ax.scatter(outer_array[:, 0], outer_array[:, 1], c='blue', s=100, zorder=5)
+            
+            # Label outer points
+            for i, (x, y) in enumerate(outer_array):
+                ax.annotate(f'{i+1}', (x, y), xytext=(5, 5), textcoords='offset points',
+                           fontsize=10, fontweight='bold', color='blue')
     
     # Plot inner hole
     if len(st.session_state.inner_points) >= 3:
         inner_array = np.array(st.session_state.inner_points)
-        inner_polygon = Polygon(inner_array, alpha=0.8, facecolor='white', 
-                               edgecolor='red', linewidth=2, label='Inner Hole')
-        ax.add_patch(inner_polygon)
         
-        # Plot inner points
-        ax.scatter(inner_array[:, 0], inner_array[:, 1], c='red', s=100, zorder=5)
+        if show_stress:
+            # Plot with stress coloring for inner hole
+            stress_values = st.session_state.results['inner_stress_values']
+            if stress_values:  # Only if we have stress data
+                stress_mpa = [s / 1e6 for s in stress_values]  # Convert to MPa
+                
+                # Create inner hole outline (cutout)
+                inner_polygon = Polygon(inner_array, fill=True, facecolor='white', 
+                                       edgecolor='white', linewidth=3, zorder=10)
+                ax.add_patch(inner_polygon)
+                
+                # Plot stress points for inner boundary
+                scatter_inner = ax.scatter(inner_array[:, 0], inner_array[:, 1], 
+                                         c=stress_mpa, s=150, cmap='viridis', 
+                                         edgecolor='white', linewidth=2, zorder=15)
+                
+                # Label points with stress values
+                for i, ((x, y), stress) in enumerate(zip(inner_array, stress_mpa)):
+                    ax.annotate(f'{i+1}\n{stress:.1f}', (x, y), xytext=(5, 5), 
+                               textcoords='offset points', fontsize=9, 
+                               fontweight='bold', color='black',
+                               bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.9))
+            else:
+                # Just show the hole outline
+                inner_polygon = Polygon(inner_array, fill=True, facecolor='white', 
+                                       edgecolor='white', linewidth=3, zorder=10)
+                ax.add_patch(inner_polygon)
+        else:
+            # Regular geometry view
+            inner_polygon = Polygon(inner_array, alpha=0.8, facecolor='white', 
+                                   edgecolor='red', linewidth=2, label='Inner Hole')
+            ax.add_patch(inner_polygon)
+            
+            # Plot inner points
+            ax.scatter(inner_array[:, 0], inner_array[:, 1], c='red', s=100, zorder=5)
+            
+            # Label inner points
+            for i, (x, y) in enumerate(inner_array):
+                ax.annotate(f'{i+1}', (x, y), xytext=(5, 5), textcoords='offset points',
+                           fontsize=10, fontweight='bold', color='red')
+    
+    # Plot individual points for active geometry (only in geometry view)
+    if not show_stress:
+        current_points = st.session_state.outer_points if st.session_state.active_tab == "Outer Shape" else st.session_state.inner_points
+        color = 'blue' if st.session_state.active_tab == "Outer Shape" else 'red'
         
-        # Label inner points
-        for i, (x, y) in enumerate(inner_array):
-            ax.annotate(f'{i+1}', (x, y), xytext=(5, 5), textcoords='offset points',
-                       fontsize=10, fontweight='bold', color='red')
-    
-    # Plot individual points for active geometry
-    current_points = st.session_state.outer_points if st.session_state.active_tab == "Outer Shape" else st.session_state.inner_points
-    color = 'blue' if st.session_state.active_tab == "Outer Shape" else 'red'
-    
-    if current_points and len(current_points) < 3:
-        points_array = np.array(current_points)
-        ax.scatter(points_array[:, 0], points_array[:, 1], c=color, s=100, zorder=5)
-        for i, (x, y) in enumerate(points_array):
-            ax.annotate(f'{i+1}', (x, y), xytext=(5, 5), textcoords='offset points',
-                       fontsize=10, fontweight='bold', color=color)
+        if current_points and len(current_points) < 3:
+            points_array = np.array(current_points)
+            ax.scatter(points_array[:, 0], points_array[:, 1], c=color, s=100, zorder=5)
+            for i, (x, y) in enumerate(points_array):
+                ax.annotate(f'{i+1}', (x, y), xytext=(5, 5), textcoords='offset points',
+                           fontsize=10, fontweight='bold', color=color)
     
     # Formatting
     ax.set_xlabel('X (mm)', fontsize=12)
     ax.set_ylabel('Y (mm)', fontsize=12)
-    ax.set_title(f'Cross-Section Geometry\n{st.session_state.active_tab} (Click coordinates)', fontsize=14)
+    
+    if show_stress:
+        ax.set_title('Shear Stress Distribution\n(Values shown at each point)', fontsize=14)
+    else:
+        ax.set_title(f'Cross-Section Geometry\n{st.session_state.active_tab} (Enter coordinates in left panel)', fontsize=14)
+    
     ax.grid(True, alpha=0.3)
     ax.set_aspect('equal')
     
@@ -523,13 +648,25 @@ with col2:
         ax.legend()
     
     # Instructions
-    instructions = f"""
-    **Instructions:**
-    - Currently editing: **{st.session_state.active_tab}**
-    - Enter coordinates in the left panel and click "Add Point"
-    - Minimum 3 points required for each shape
-    - Points will be connected in order to form the shape
-    """
+    if show_stress:
+        results = st.session_state.results
+        max_stress_mpa = results['max_shear_stress'] / 1e6
+        instructions = f"""
+        **Stress Analysis Results:**
+        - Max shear stress: **{max_stress_mpa:.2f} MPa**
+        - Color scale shows stress distribution at each point
+        - Numbers show point ID and stress value (MPa)
+        - Higher values indicate higher stress concentrations
+        """
+    else:
+        instructions = f"""
+        **Instructions:**
+        - Currently editing: **{st.session_state.active_tab}**
+        - Enter coordinates in the left panel using the text area
+        - Minimum 3 points required for each shape
+        - Points will be connected in order to form the shape
+        - Use Quick Shapes or paste coordinate data
+        """
     
     st.pyplot(fig)
     st.info(instructions)

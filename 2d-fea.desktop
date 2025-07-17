@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Name=2D FEA Torsion Analysis
+Comment=Finite Element Analysis for Torsional Loading
+GenericName=FEA Application
+Exec=/home/adminlinux/2d FEA/launch_fea.sh
+Icon=/home/adminlinux/2d FEA/icon.png
+Terminal=true
+Type=Application
+Categories=Engineering;Science;Education;
+StartupNotify=true
+Keywords=FEA;Engineering;Analysis;Torsion;Finite Element;
