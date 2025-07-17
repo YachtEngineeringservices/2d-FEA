@@ -76,21 +76,30 @@ jobs:
         import os
         from cx_Freeze import setup, Executable
         
+        # Add src directory to path for imports
+        sys.path.insert(0, 'src')
+        
         # Dependencies to include
         packages = [
             'numpy', 'scipy', 'matplotlib', 'PySide6', 'gmsh', 'meshio', 
-            'h5py', 'pyvista', 'vtk', 'json', 'pathlib', 'logging'
+            'h5py', 'pyvista', 'vtk', 'json', 'pathlib', 'logging',
+            'gui', 'fea'  # Include local modules
         ]
         
-        # Files to include
-        include_files = []
+        # Files to include - include the entire src directory
+        include_files = [
+            ('src/gui/', 'lib/gui/'),
+            ('src/fea/', 'lib/fea/'),
+        ]
         
-        # Build options (removed include_msvcrt - not supported)
+        # Build options
         build_exe_options = {
             'packages': packages,
             'include_files': include_files,
             'excludes': ['tkinter', 'test', 'unittest', 'distutils'],
             'optimize': 2,
+            'path': ['src'],  # Add src to Python path
+            'include_path': ['src'],  # Include src in module search
         }
         
         # MSI options
