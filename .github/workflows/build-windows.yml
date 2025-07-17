@@ -35,16 +35,26 @@ jobs:
     
     - name: 📦 Install Python Dependencies
       run: |
-        # Install core dependencies
+        # Install core dependencies (guaranteed to work)
         pip install numpy matplotlib scipy plotly
         pip install PySide6 pyinstaller
         pip install gmsh meshio h5py pyvista vtk
         
+        # Try to install DOLFINx (may fail on Windows)
+        try {
+          Write-Host "Attempting to install DOLFINx..."
+          pip install fenics-dolfinx
+          Write-Host "✅ DOLFINx installed successfully"
+        } catch {
+          Write-Host "⚠️ DOLFINx installation failed - will use simplified solver"
+          Write-Host "Error: $_"
+        }
+        
         # Install additional requirements if they exist
         if (Test-Path "requirements_windows.txt") {
-          pip install -r requirements_windows.txt
+          pip install -r requirements_windows.txt --ignore-installed --no-deps
         } elseif (Test-Path "requirements.txt") {
-          pip install -r requirements.txt
+          pip install -r requirements.txt --ignore-installed --no-deps
         }
     
     - name: 🔍 Verify Installation
@@ -58,6 +68,13 @@ jobs:
         python -c "import meshio; print('MeshIO:', meshio.__version__)"
         python -c "import h5py; print('h5py:', h5py.__version__)"
         python -c "import pyvista; print('PyVista:', pyvista.__version__)"
+        
+        # Check DOLFINx availability (optional)
+        try {
+          python -c "import dolfinx; print('DOLFINx: Available')"
+        } catch {
+          Write-Host "DOLFINx: Not available (will use simplified solver)"
+        }
     
     - name: 🏗️ Create Build Directories
       run: |
@@ -77,13 +94,39 @@ jobs:
         datas = []
         datas += collect_data_files('matplotlib')
         datas += collect_data_files('PySide6')
+        
+        # Conditionally collect DOLFINx data if available
+        try:
+            datas += collect_data_files('dolfinx')
+        except:
+            print("DOLFINx data files not collected (package not available)")
+            
+        datas += collect_data_files('pyvista')
+        datas += collect_data_files('vtk')
+        datas += collect_data_files('gmsh')
+        datas += collect_data_files('meshio')
+        datas += collect_data_files('h5py')
 
         # Hidden imports for dependencies
         hiddenimports = []
         hiddenimports += collect_submodules('matplotlib')
         hiddenimports += collect_submodules('PySide6')
-        hiddenimports += ['numpy', 'scipy', 'json', 'pathlib', 'gmsh', 'meshio', 'h5py', 'pyvista', 'vtk']
-        hiddenimports += ['gui.main_window', 'gui.mpl_canvas', 'fea.meshing', 'fea.solver']
+        
+        # Conditionally include DOLFINx submodules if available
+        try:
+            hiddenimports += collect_submodules('dolfinx')
+            hiddenimports += ['dolfinx', 'dolfinx.fem', 'dolfinx.mesh', 'dolfinx.io']
+        except:
+            print("DOLFINx submodules not collected (package not available)")
+            
+        hiddenimports += collect_submodules('pyvista')
+        hiddenimports += collect_submodules('vtk')
+        hiddenimports += collect_submodules('gmsh')
+        hiddenimports += collect_submodules('meshio')
+        hiddenimports += collect_submodules('h5py')
+        hiddenimports += ['numpy', 'scipy', 'json', 'pathlib']
+        hiddenimports += ['pyvista', 'vtk', 'gmsh', 'meshio', 'h5py']
+        hiddenimports += ['gui.main_window', 'gui.mpl_canvas', 'fea.meshing', 'fea.solver', 'fea.solver_windows']
 
         block_cipher = None
 

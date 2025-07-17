@@ -12,7 +12,26 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction, QFont
 import numpy as np
 from .mpl_canvas import MplCanvas
-from fea import meshing, solver
+from fea import meshing
+
+# Try to import the full solver, fallback to Windows solver
+try:
+    from fea import solver
+    SOLVER_TYPE = "full"
+except ImportError as e:
+    # If DOLFINx is not available, use Windows-compatible solver
+    try:
+        from fea import solver_windows as solver
+        SOLVER_TYPE = "simplified"
+        print(f"Note: Using simplified solver due to missing dependencies: {e}")
+    except ImportError:
+        # Create a dummy solver for GUI testing
+        class DummySolver:
+            def solve_torsion(self, *args, **kwargs):
+                return {"error": True, "message": "No solver available"}
+        solver = DummySolver()
+        SOLVER_TYPE = "dummy"
+        print("Warning: No solver available - GUI only mode")
 
 # Get a logger for this module
 log = logging.getLogger(__name__)
