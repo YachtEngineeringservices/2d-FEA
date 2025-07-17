@@ -12,26 +12,21 @@ jobs:
   build-windows:
     runs-on: windows-latest
     
-    strategy:
-      matrix:
-        python-version: ['3.11', '3.12']
-        architecture: ['x64']
-    
     steps:
     - name: 🔽 Checkout Repository
       uses: actions/checkout@v4
     
-    - name: 🐍 Set up Python ${{ matrix.python-version }}
+    - name: 🐍 Set up Python 3.12
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.python-version }}
-        architecture: ${{ matrix.architecture }}
+        python-version: '3.12'
+        architecture: 'x64'
     
     - name: 📋 Display Python Info
       run: |
         python --version
         python -m pip --version
-        echo "Architecture: ${{ matrix.architecture }}"
+        echo "Architecture: x64"
     
     - name: 🔧 Install System Dependencies
       run: |
@@ -124,7 +119,7 @@ jobs:
             runtime_tmpdir=None,
             console=False,
             disable_windowed_traceback=False,
-            target_arch='${{ matrix.architecture }}',
+            target_arch='x64',
             codesign_identity=None,
             entitlements_file=None,
             icon=None,
@@ -170,7 +165,7 @@ jobs:
         echo "Creating distribution package..."
         
         # Create distribution folder
-        $distFolder = "2D_FEA_Windows_${{ matrix.python-version }}_${{ matrix.architecture }}"
+        $distFolder = "2D_FEA_Windows_3.12_x64"
         New-Item -ItemType Directory -Force -Path $distFolder
         
         # Copy executable
@@ -183,8 +178,8 @@ jobs:
         # 2D FEA Windows Application
         
         Built on: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-        Python Version: ${{ matrix.python-version }}
-        Architecture: ${{ matrix.architecture }}
+        Python Version: 3.12
+        Architecture: x64
         
         ## Application:
         
@@ -234,8 +229,8 @@ jobs:
     - name: 📊 Build Summary
       run: |
         echo "=== BUILD SUMMARY ==="
-        echo "Python Version: ${{ matrix.python-version }}"
-        echo "Architecture: ${{ matrix.architecture }}"
+        echo "Python Version: 3.12"
+        echo "Architecture: x64"
         echo "Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
         echo ""
         echo "Built Application:"
@@ -253,7 +248,7 @@ jobs:
     - name: 📤 Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: 2D-FEA-Windows-Python${{ matrix.python-version }}-${{ matrix.architecture }}
+        name: 2D-FEA-Windows-Python3.12-x64
         path: |
           dist/*.exe
           *.zip
@@ -263,7 +258,7 @@ jobs:
     - name: 📤 Upload Distribution ZIP
       uses: actions/upload-artifact@v4
       with:
-        name: 2D-FEA-Windows-Distribution-Python${{ matrix.python-version }}
+        name: 2D-FEA-Windows-Distribution-Python3.12
         path: "*.zip"
         retention-days: 90
 
