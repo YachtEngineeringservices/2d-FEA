@@ -1,11 +1,20 @@
-import dolfinx
-from dolfinx import fem, mesh, io
-from dolfinx.fem.petsc import LinearProblem
-from mpi4py import MPI
-import ufl
 import numpy as np
 import logging
 import os
+
+# Protected imports for FEniCS/PETSC
+try:
+    import dolfinx
+    from dolfinx import fem, mesh, io
+    from dolfinx.fem.petsc import LinearProblem
+    from mpi4py import MPI
+    import ufl
+    FENICS_AVAILABLE = True
+except ImportError:
+    FENICS_AVAILABLE = False
+    # Create dummy classes to prevent import errors
+    MPI = None
+    ufl = None
 
 log = logging.getLogger(__name__)
 
@@ -25,9 +34,12 @@ def solve_torsion(mesh_dir, G, T, L):
             - k (float): Torsional stiffness (Nm/rad).
             - theta (float): Angle of twist (radians).
             - tau_max (float): Maximum shear stress (Pascals).
-            - phi (dolfinx.fem.Function): The stress function solution.
-            - V (dolfinx.fem.FunctionSpace): The function space for plotting.
+            - tau_magnitude (dolfinx.fem.Function): The shear stress magnitude field.
+            - V_mag (dolfinx.fem.FunctionSpace): The function space for the stress field.
     """
+    if not FENICS_AVAILABLE:
+        raise ImportError("FEniCS is not available. Cannot perform torsion analysis.")
+        
     comm = MPI.COMM_WORLD
     log.info("Starting torsion solver.")
 
@@ -114,5 +126,5 @@ def solve_torsion(mesh_dir, G, T, L):
     tau_max = np.max(tau_magnitude.x.array)
     log.info(f"Calculated Maximum Shear Stress (tau_max): {tau_max:.2f} Pa")
 
-    # Return the normalized stress function for plotting, as it shows the shape
-    return J, k, theta, tau_max, psi_h, V
+    # Return the stress magnitude field for plotting instead of the stress function
+    return J, k, theta, tau_max, tau_magnitude, V_mag

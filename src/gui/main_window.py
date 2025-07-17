@@ -9,10 +9,7 @@ from PySide6.QtWidgets import (
     QProgressDialog, QTabWidget, QMenuBar, QMenu, QListWidget, QListWidgetItem,
     QSplitter, QGroupBox, QSpinBox, QDoubleSpinBox
 )
-from PySide6.QtGui import QAction
-import dolfinx
-from dolfinx import fem
-import dolfinx.plot
+from PySide6.QtGui import QAction, QFont
 import numpy as np
 from .mpl_canvas import MplCanvas
 from fea import meshing, solver
@@ -29,6 +26,19 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("2D Torsional Analysis FEA")
         self.setGeometry(100, 100, 1200, 800) # Increased width for tabs
+        
+        # Set up larger, more readable fonts for the entire application
+        font = QFont()
+        font.setPointSize(12)  # Equivalent to size 12 in Word
+        font.setFamily("Segoe UI")  # Use a clean, readable font
+        self.setFont(font)
+        
+        # Set this font as the application default
+        QApplication.instance().setFont(font)
+        
+        # Apply additional styling for better readability
+        self.apply_styling()
+        
         log.info("Main window initialized.")
 
         # Data storage
@@ -123,6 +133,51 @@ class MainWindow(QMainWindow):
 
         # Set initial state
         self.on_tab_change(0)
+
+    def apply_styling(self):
+        """Apply custom styling for better readability."""
+        # Set a stylesheet for the entire application
+        style = """
+        QWidget {
+            font-size: 12pt;
+        }
+        QLabel {
+            font-size: 12pt;
+            font-weight: 500;
+        }
+        QPushButton {
+            font-size: 12pt;
+            font-weight: 500;
+            padding: 8px 16px;
+            min-height: 20px;
+        }
+        QLineEdit, QDoubleSpinBox, QSpinBox {
+            font-size: 12pt;
+            padding: 6px;
+            min-height: 20px;
+        }
+        QTextEdit {
+            font-size: 11pt;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        QListWidget {
+            font-size: 12pt;
+        }
+        QGroupBox {
+            font-size: 12pt;
+            font-weight: 600;
+            padding-top: 10px;
+        }
+        QTabWidget::pane {
+            border: 1px solid #C2C7CB;
+        }
+        QTabBar::tab {
+            font-size: 12pt;
+            font-weight: 500;
+            padding: 8px 16px;
+        }
+        """
+        self.setStyleSheet(style)
 
     def create_menu_bar(self):
         """Creates the menu bar with File and View menu options."""
@@ -492,11 +547,11 @@ class MainWindow(QMainWindow):
                 points_list.setCurrentRow(point_idx)
                 log.debug(f"Point {point_idx + 1} selected via plot click")
 
-    def update_plot(self, phi=None, V=None):
-        """Redraws the geometry or plots the stress function contour."""
+    def update_plot(self, stress_field=None, V_field=None):
+        """Redraws the geometry or plots the stress contour."""
         self.plot_canvas.axes.clear()
-        if phi is not None and V is not None:
-            self.plot_canvas.plot_contour(phi, V)
+        if stress_field is not None and V_field is not None:
+            self.plot_canvas.plot_contour(stress_field, V_field, self.inner_points)
         else:
             # Determine which points list is active
             active_is_outer = (self.geom_tabs.currentIndex() == 0)
@@ -600,7 +655,7 @@ class MainWindow(QMainWindow):
             if progress.wasCanceled():
                 raise InterruptedError("Analysis cancelled by user.")
 
-            J, k, theta, tau_max, phi, V = solver.solve_torsion(mesh_dir, G_Pa, T_Nm, L_beam_m)
+            J, k, theta, tau_max, tau_magnitude, V_mag = solver.solve_torsion(mesh_dir, G_Pa, T_Nm, L_beam_m)
             log.info(f"Solver finished. J={J:.4e}, k={k:.4e}, theta={theta:.4e}, tau_max={tau_max:.4e}")
 
             # 3. Updating GUI
@@ -617,8 +672,8 @@ class MainWindow(QMainWindow):
             self.twist_angle_label.setText(f"Angle of Twist (θ): {np.rad2deg(theta):.4f} degrees")
             self.max_stress_label.setText(f"Max Shear Stress (τ_max): {tau_max/1e6:.2f} MPa")
 
-            # 4. Update plot with contour of phi
-            self.update_plot(phi, V)
+            # 4. Update plot with contour of shear stress
+            self.update_plot(tau_magnitude, V_mag)
             
             progress.setValue(4) # Finish
             log.info("Analysis run completed successfully.")

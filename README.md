@@ -5,7 +5,9 @@ A cross-platform 2D Finite Element Analysis application for structural and torsi
 ## Features
 
 - **2D FEA Simple**: Basic structural analysis with interactive GUI
-- **2D FEA Torsion Analysis**: Specialized torsional analysis tool
+- **2D FEA Torsion Analysis**: Specialized torsional analysis tool with advanced point editing
+- **Interactive Point Editing**: Edit coordinates, reorder points, and delete points with intuitive controls
+- **Interactive Plot Navigation**: Zoom with mouse wheel, pan with right-click drag, click-to-select points
 - **Cross-platform**: Works on Windows, Linux, and web browsers
 - **Automated Windows Builds**: GitHub Actions automatically creates Windows executables
 
