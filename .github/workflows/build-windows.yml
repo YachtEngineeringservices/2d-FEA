@@ -1,0 +1,371 @@
+name: Build Windows Executables
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - name: 🔽 Checkout Repository
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        architecture: 'x64'
+    
+    - name: 📋 Display Python Info
+      run: |
+        python --version
+        python -m pip --version
+        echo "Architecture: x64"
+    
+    - name: 🔧 Install System Dependencies
+      run: |
+        # Update pip and install wheel
+        python -m pip install --upgrade pip wheel setuptools
+    
+    - name: 📦 Install Python Dependencies
+      run: |
+        # Install core dependencies (guaranteed to work)
+        pip install numpy matplotlib scipy plotly
+        pip install PySide6 pyinstaller
+        pip install gmsh meshio h5py pyvista vtk
+        
+        # Try to install DOLFINx (may fail on Windows)
+        Write-Host "Attempting to install DOLFINx..."
+        pip install fenics-dolfinx 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✅ DOLFINx installed successfully"
+        } else {
+            Write-Host "⚠️ DOLFINx installation failed - will use simplified solver"
+        }
+        
+        # Install additional requirements if they exist
+        if (Test-Path "requirements_windows.txt") {
+          pip install -r requirements_windows.txt --ignore-installed --no-deps
+        } elseif (Test-Path "requirements.txt") {
+          pip install -r requirements.txt --ignore-installed --no-deps
+        }
+    
+    - name: 🔍 Verify Installation
+      run: |
+        python -c "import sys; print('Python:', sys.version)"
+        python -c "import numpy; print('NumPy:', numpy.__version__)"
+        python -c "import matplotlib; print('Matplotlib:', matplotlib.__version__)"
+        python -c "import PySide6; print('PySide6:', PySide6.__version__)"
+        python -c "import PyInstaller; print('PyInstaller:', PyInstaller.__version__)"
+        python -c "import gmsh; print('GMSH available')"
+        python -c "import meshio; print('MeshIO:', meshio.__version__)"
+        python -c "import h5py; print('h5py:', h5py.__version__)"
+        python -c "import pyvista; print('PyVista:', pyvista.__version__)"
+        
+        # Check DOLFINx availability (optional - don't fail if missing)
+        python -c "
+        try:
+            import dolfinx
+            print('DOLFINx: Available')
+        except ImportError:
+            print('DOLFINx: Not available (will use simplified solver)')
+        " || echo "DOLFINx check completed"
+    
+    - name: 🏗️ Create Build Directories
+      run: |
+        New-Item -ItemType Directory -Force -Path "dist"
+        New-Item -ItemType Directory -Force -Path "build"
+    
+    - name: 📝 Create PyInstaller Spec for Directory Build
+      run: |
+        # Create spec file for directory-based build (much smaller than single EXE)
+        @"
+        # -*- mode: python ; coding: utf-8 -*-
+        import sys
+        import os
+        from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+        # Collect data files for various packages
+        datas = []
+        datas += collect_data_files('matplotlib')
+        datas += collect_data_files('PySide6')
+        
+        # Conditionally collect DOLFINx data if available
+        try:
+            datas += collect_data_files('dolfinx')
+        except:
+            print("DOLFINx data files not collected (package not available)")
+            
+        datas += collect_data_files('pyvista')
+        datas += collect_data_files('vtk')
+        datas += collect_data_files('gmsh')
+        datas += collect_data_files('meshio')
+        datas += collect_data_files('h5py')
+
+        # Hidden imports for dependencies
+        hiddenimports = []
+        hiddenimports += collect_submodules('matplotlib')
+        hiddenimports += collect_submodules('PySide6')
+        
+        # Conditionally include DOLFINx submodules if available
+        try:
+            hiddenimports += collect_submodules('dolfinx')
+            hiddenimports += ['dolfinx', 'dolfinx.fem', 'dolfinx.mesh', 'dolfinx.io']
+        except:
+            print("DOLFINx submodules not collected (package not available)")
+            
+        hiddenimports += collect_submodules('pyvista')
+        hiddenimports += collect_submodules('vtk')
+        hiddenimports += collect_submodules('gmsh')
+        hiddenimports += collect_submodules('meshio')
+        hiddenimports += collect_submodules('h5py')
+        hiddenimports += ['numpy', 'scipy', 'json', 'pathlib']
+        hiddenimports += ['pyvista', 'vtk', 'gmsh', 'meshio', 'h5py']
+        hiddenimports += ['gui.main_window', 'gui.mpl_canvas', 'fea.meshing', 'fea.solver', 'fea.solver_windows']
+
+        block_cipher = None
+
+        a = Analysis(
+            ['src/main_windows.py'],
+            pathex=['src'],
+            binaries=[],
+            datas=datas,
+            hiddenimports=hiddenimports,
+            hookspath=[],
+            hooksconfig={},
+            runtime_hooks=[],
+            excludes=['tkinter', 'test', 'unittest'],
+            win_no_prefer_redirects=False,
+            win_private_assemblies=False,
+            cipher=block_cipher,
+            noarchive=False,
+        )
+
+        pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+        exe = EXE(
+            pyz,
+            a.scripts,
+            [],
+            exclude_binaries=True,
+            name='2D_FEA',
+            debug=False,
+            bootloader_ignore_signals=False,
+            strip=False,
+            upx=True,
+            console=False,
+            disable_windowed_traceback=False,
+            target_arch='x64',
+            codesign_identity=None,
+            entitlements_file=None,
+            icon=None,
+        )
+
+        coll = COLLECT(
+            exe,
+            a.binaries,
+            a.zipfiles,
+            a.datas,
+            strip=False,
+            upx=True,
+            upx_exclude=[],
+            name='2D_FEA_Windows',
+        )
+        "@ | Out-File -FilePath "build_directory.spec" -Encoding UTF8
+    
+    - name: 🔨 Build Windows Application Directory
+      run: |
+        echo "Building 2D FEA Windows application directory..."
+        
+        # Build using PyInstaller directory mode (much smaller than single EXE)
+        pyinstaller build_directory.spec --clean --noconfirm
+        
+        # Check if directory was created
+        if (Test-Path "dist/2D_FEA_Windows") {
+          echo "✅ Application directory built successfully"
+          
+          # Show directory contents and size
+          $dirSize = (Get-ChildItem -Path "dist/2D_FEA_Windows" -Recurse | Measure-Object -Property Length -Sum).Sum
+          $sizeMB = [math]::Round($dirSize / 1MB, 1)
+          echo "📁 Directory size: $sizeMB MB"
+          
+          # Check for main executable
+          if (Test-Path "dist/2D_FEA_Windows/2D_FEA.exe") {
+            echo "✅ Main executable found: 2D_FEA.exe"
+          } else {
+            echo "❌ Main executable not found"
+            exit 1
+          }
+        } else {
+          echo "❌ Application directory build failed"
+          Get-ChildItem "dist/" -ErrorAction SilentlyContinue
+          exit 1
+        }
+    
+    - name: 🧪 Test Application Directory
+      run: |
+        echo "Testing application directory..."
+        if (Test-Path "dist/2D_FEA_Windows/2D_FEA.exe") {
+          $exe = Get-Item "dist/2D_FEA_Windows/2D_FEA.exe"
+          echo "Main executable: $($exe.Name) - $([math]::Round($exe.Length / 1MB, 1)) MB"
+          
+          # Count total files in distribution
+          $fileCount = (Get-ChildItem -Path "dist/2D_FEA_Windows" -Recurse -File).Count
+          echo "Total files in distribution: $fileCount"
+          
+          # Calculate total size
+          $totalSize = (Get-ChildItem -Path "dist/2D_FEA_Windows" -Recurse | Measure-Object -Property Length -Sum).Sum
+          $totalSizeMB = [math]::Round($totalSize / 1MB, 1)
+          echo "Total distribution size: $totalSizeMB MB"
+          
+          echo "✅ Application directory validation completed"
+          
+        } else {
+          echo "❌ Application executable not found"
+          exit 1
+        }
+    
+    - name: 📦 Create Distribution Package
+      run: |
+        echo "Creating distribution package..."
+        
+        # Check if application directory exists
+        if (-not (Test-Path "dist/2D_FEA_Windows")) {
+          echo "❌ Application directory not found"
+          exit 1
+        }
+        
+        $distFolder = "2D_FEA_Windows_Directory_3.12_x64"
+        New-Item -ItemType Directory -Force -Path $distFolder
+        
+        # Copy the entire application directory
+        Copy-Item -Path "dist/2D_FEA_Windows" -Destination "$distFolder/" -Recurse
+        
+        # Create README for distribution
+        $readme = @"
+        # 2D FEA Windows Application - Directory Distribution
+        
+        Built on: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        Python Version: 3.12
+        Architecture: x64
+        Distribution Type: Directory (Portable)
+        
+        ## Installation:
+        
+        1. **Extract** this ZIP file to any location (e.g., C:\Program Files\2D FEA\)
+        2. **Navigate** to the extracted 2D_FEA_Windows folder
+        3. **Run** 2D_FEA.exe to start the application
+        4. **Optional**: Create a desktop shortcut to 2D_FEA.exe
+        
+        ## Advantages:
+        
+        - ✅ **Much smaller download** compared to single EXE (~100-200MB vs 400-500MB)
+        - ✅ **Faster startup** - no extraction needed
+        - ✅ **Portable** - works from any location
+        - ✅ **No installation required** - just extract and run
+        - ✅ **Easy to move or backup** - just copy the folder
+        
+        ## Application Features:
+        
+        - Geometry input and visualization
+        - Mesh generation with GMSH  
+        - 3D visualization with PyVista/VTK
+        - Save/Load project files
+        - Results visualization with matplotlib
+        
+        ## System Requirements:
+        
+        - Windows 10/11 (64-bit)
+        - No Python installation required (bundled)
+        - ~200MB disk space after extraction
+        
+        ## Usage:
+        
+        - Simply run 2D_FEA_Windows/2D_FEA.exe
+        - All dependencies are included in the folder
+        - Can be run from USB drive or network location
+        
+        ## Troubleshooting:
+        
+        - **Windows Defender warning**: Right-click → Properties → Unblock → OK
+        - **Slow first startup**: Windows may scan all files initially
+        - **Missing files**: Ensure all files in 2D_FEA_Windows folder are present
+        
+        ## Build Information:
+        
+        - Built with PyInstaller directory mode
+        - Includes PySide6, matplotlib, numpy, GMSH, PyVista, VTK
+        - All files organized in structured directory layout
+        
+        For support, visit: https://github.com/YachtEngineeringservices/2d-FEA
+        "@
+        $readme | Out-File -FilePath "$distFolder/README.txt" -Encoding UTF8
+        
+        # Create ZIP package
+        Compress-Archive -Path "$distFolder/*" -DestinationPath "$distFolder.zip" -Force
+        
+        echo "Distribution package created: $distFolder.zip"
+        Get-Item "$distFolder.zip" | Format-List Name, Length
+    
+    - name: 📊 Build Summary
+      run: |
+        echo "=== BUILD SUMMARY ==="
+        echo "Python Version: 3.12"
+        echo "Architecture: x64"
+        echo "Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        echo ""
+        echo "Built Application:"
+        if (Test-Path "dist/2D_FEA_Windows") {
+          $totalSize = (Get-ChildItem -Path "dist/2D_FEA_Windows" -Recurse | Measure-Object -Property Length -Sum).Sum
+          $sizeMB = [math]::Round($totalSize / 1MB, 1)
+          echo "✅ 2D_FEA_Windows directory ($sizeMB MB)"
+        }
+        echo ""
+        echo "Distribution Packages:"
+        Get-ChildItem -Filter "*.zip" | ForEach-Object {
+          $sizeMB = $_.Length / 1MB
+          echo "📦 $($_.Name) ({0:N1} MB)" -f $sizeMB
+        }
+    
+    - name: 📤 Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: 2D-FEA-Windows-Directory-Python3.12-x64
+        path: |
+          dist/2D_FEA_Windows/
+          *.zip
+          build_directory.spec
+        retention-days: 30
+    
+    - name: 📤 Upload Distribution ZIP
+      uses: actions/upload-artifact@v4
+      with:
+        name: 2D-FEA-Windows-Directory-Distribution-Python3.12
+        path: "*.zip"
+        retention-days: 90
+
+  create-release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: 🔽 Download All Artifacts
+      uses: actions/download-artifact@v4
+    
+    - name: 📦 Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          **/*.zip
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
