@@ -71,7 +71,7 @@ jobs:
     - name: 📝 Create cx_Freeze Setup Script
       run: |
         # Create setup script for MSI generation
-        $setupScript = @"
+        @"
         import sys
         import os
         from cx_Freeze import setup, Executable
@@ -125,8 +125,7 @@ jobs:
             },
             executables=executables,
         )
-        "@
-        `$setupScript | Out-File -FilePath "setup_msi.py" -Encoding UTF8
+        "@ | Out-File -FilePath "setup_msi.py" -Encoding UTF8
     
     - name: 🔨 Build Windows MSI Installer
       run: |
