@@ -153,6 +153,13 @@ def create_mesh(outer_points, inner_points, mesh_size):
         meshio.write(os.path.join(output_dir, "facets.xdmf"), facet_mesh)
         log.info("Successfully created domain.xdmf and facets.xdmf")
 
+        # Clean up intermediate MSH file after successful conversion
+        try:
+            os.remove(msh_filename)
+            log.info(f"Cleaned up intermediate file: {msh_filename}")
+        except OSError as e:
+            log.warning(f"Could not remove intermediate file {msh_filename}: {e}")
+
     except Exception as e:
         log.error("Failed to convert MSH to XDMF.", exc_info=True)
         raise
