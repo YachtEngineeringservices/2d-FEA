@@ -40,9 +40,6 @@ jobs:
         pip install PySide6 pyinstaller
         pip install gmsh meshio h5py pyvista vtk
         
-        # Install MSI creation tools
-        pip install cx_Freeze
-        
         # Install additional requirements if they exist
         if (Test-Path "requirements_windows.txt") {
           pip install -r requirements_windows.txt
@@ -61,132 +58,132 @@ jobs:
         python -c "import meshio; print('MeshIO:', meshio.__version__)"
         python -c "import h5py; print('h5py:', h5py.__version__)"
         python -c "import pyvista; print('PyVista:', pyvista.__version__)"
-        python -c "import cx_Freeze; print('cx_Freeze:', cx_Freeze.__version__)"
     
     - name: 🏗️ Create Build Directories
       run: |
         New-Item -ItemType Directory -Force -Path "dist"
         New-Item -ItemType Directory -Force -Path "build"
     
-    - name: 📝 Create cx_Freeze Setup Script
+    - name: 📝 Create PyInstaller Spec for Directory Build
       run: |
-        # Create setup script for MSI generation
+        # Create spec file for directory-based build (much smaller than single EXE)
         @"
+        # -*- mode: python ; coding: utf-8 -*-
         import sys
         import os
-        from cx_Freeze import setup, Executable
-        
-        # Add src directory to path for imports
-        sys.path.insert(0, 'src')
-        
-        # Dependencies to include
-        packages = [
-            'numpy', 'scipy', 'matplotlib', 'PySide6', 'gmsh', 'meshio', 
-            'h5py', 'pyvista', 'vtk', 'json', 'pathlib', 'logging',
-            'gui', 'fea'  # Include local modules
-        ]
-        
-        # Files to include - include the entire src directory
-        include_files = [
-            ('src/gui/', 'lib/gui/'),
-            ('src/fea/', 'lib/fea/'),
-        ]
-        
-        # Build options
-        build_exe_options = {
-            'packages': packages,
-            'include_files': include_files,
-            'excludes': ['tkinter', 'test', 'unittest', 'distutils'],
-            'optimize': 2,
-            'path': ['src'],  # Add src to Python path
-            'include_path': ['src'],  # Include src in module search
-        }
-        
-        # MSI options
-        bdist_msi_options = {
-            'upgrade_code': '{12345678-1234-5678-9012-123456789012}',
-            'add_to_path': False,
-            'initial_target_dir': r'[ProgramFilesFolder]\2D FEA',
-        }
-        
-        # Executable configuration
-        executables = [
-            Executable(
-                'src/main_windows.py',
-                base='Win32GUI',
-                target_name='2D_FEA.exe',
-                shortcut_name='2D FEA Torsion Analysis',
-                shortcut_dir='ProgramMenuFolder',
-            )
-        ]
-        
-        setup(
-            name='2D FEA Torsion Analysis',
-            version='1.0.0',
-            description='2D Finite Element Analysis for Torsion Problems',
-            author='Yacht Engineering Services',
-            options={
-                'build_exe': build_exe_options,
-                'bdist_msi': bdist_msi_options,
-            },
-            executables=executables,
+        from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+        # Collect data files for various packages
+        datas = []
+        datas += collect_data_files('matplotlib')
+        datas += collect_data_files('PySide6')
+
+        # Hidden imports for dependencies
+        hiddenimports = []
+        hiddenimports += collect_submodules('matplotlib')
+        hiddenimports += collect_submodules('PySide6')
+        hiddenimports += ['numpy', 'scipy', 'json', 'pathlib', 'gmsh', 'meshio', 'h5py', 'pyvista', 'vtk']
+        hiddenimports += ['gui.main_window', 'gui.mpl_canvas', 'fea.meshing', 'fea.solver']
+
+        block_cipher = None
+
+        a = Analysis(
+            ['src/main_windows.py'],
+            pathex=['src'],
+            binaries=[],
+            datas=datas,
+            hiddenimports=hiddenimports,
+            hookspath=[],
+            hooksconfig={},
+            runtime_hooks=[],
+            excludes=['tkinter', 'test', 'unittest'],
+            win_no_prefer_redirects=False,
+            win_private_assemblies=False,
+            cipher=block_cipher,
+            noarchive=False,
         )
-        "@ | Out-File -FilePath "setup_msi.py" -Encoding UTF8
+
+        pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+        exe = EXE(
+            pyz,
+            a.scripts,
+            [],
+            exclude_binaries=True,
+            name='2D_FEA',
+            debug=False,
+            bootloader_ignore_signals=False,
+            strip=False,
+            upx=True,
+            console=False,
+            disable_windowed_traceback=False,
+            target_arch='x64',
+            codesign_identity=None,
+            entitlements_file=None,
+            icon=None,
+        )
+
+        coll = COLLECT(
+            exe,
+            a.binaries,
+            a.zipfiles,
+            a.datas,
+            strip=False,
+            upx=True,
+            upx_exclude=[],
+            name='2D_FEA_Windows',
+        )
+        "@ | Out-File -FilePath "build_directory.spec" -Encoding UTF8
     
-    - name: 🔨 Build Windows MSI Installer
+    - name: 🔨 Build Windows Application Directory
       run: |
-        echo "Building 2D FEA Windows MSI installer..."
+        echo "Building 2D FEA Windows application directory..."
         
-        # First create the executable
-        python setup_msi.py build
+        # Build using PyInstaller directory mode (much smaller than single EXE)
+        pyinstaller build_directory.spec --clean --noconfirm
         
-        # Then create the MSI installer
-        python setup_msi.py bdist_msi
-        
-        # Check if MSI was created
-        $msiFiles = Get-ChildItem -Path "dist" -Filter "*.msi" -ErrorAction SilentlyContinue
-        if ($msiFiles.Count -gt 0) {
-          echo "✅ MSI installer built successfully"
-          foreach ($msi in $msiFiles) {
-            echo "📦 $($msi.Name): $([math]::Round($msi.Length / 1MB, 1)) MB"
+        # Check if directory was created
+        if (Test-Path "dist/2D_FEA_Windows") {
+          echo "✅ Application directory built successfully"
+          
+          # Show directory contents and size
+          $dirSize = (Get-ChildItem -Path "dist/2D_FEA_Windows" -Recurse | Measure-Object -Property Length -Sum).Sum
+          $sizeMB = [math]::Round($dirSize / 1MB, 1)
+          echo "📁 Directory size: $sizeMB MB"
+          
+          # Check for main executable
+          if (Test-Path "dist/2D_FEA_Windows/2D_FEA.exe") {
+            echo "✅ Main executable found: 2D_FEA.exe"
+          } else {
+            echo "❌ Main executable not found"
+            exit 1
           }
         } else {
-          echo "❌ MSI installer build failed"
+          echo "❌ Application directory build failed"
           Get-ChildItem "dist/" -ErrorAction SilentlyContinue
           exit 1
         }
     
-    - name: 🧪 Test MSI Installer
+    - name: 🧪 Test Application Directory
       run: |
-        echo "Testing MSI installer..."
-        $msiFiles = Get-ChildItem -Path "dist" -Filter "*.msi"
-        if ($msiFiles.Count -gt 0) {
-          foreach ($msi in $msiFiles) {
-            echo "MSI Installer: $($msi.Name) - $([math]::Round($msi.Length / 1MB, 1)) MB"
-          }
+        echo "Testing application directory..."
+        if (Test-Path "dist/2D_FEA_Windows/2D_FEA.exe") {
+          $exe = Get-Item "dist/2D_FEA_Windows/2D_FEA.exe"
+          echo "Main executable: $($exe.Name) - $([math]::Round($exe.Length / 1MB, 1)) MB"
           
-          # Basic MSI validation
-          echo "Performing basic MSI validation..."
-          $msi = $msiFiles[0]
+          # Count total files in distribution
+          $fileCount = (Get-ChildItem -Path "dist/2D_FEA_Windows" -Recurse -File).Count
+          echo "Total files in distribution: $fileCount"
           
-          # Check if it's a valid MSI file (basic signature check)
-          try {
-            $bytes = [System.IO.File]::ReadAllBytes($msi.FullName)
-            # MSI files start with "PK" signature or have MSI header
-            if ($msi.Extension -eq ".msi" -and $msi.Length -gt 1MB) {
-              echo "✅ Valid MSI installer format"
-              echo "✅ File size reasonable: $([math]::Round($msi.Length / 1MB, 1)) MB"
-            } else {
-              echo "⚠️ MSI file seems unusual"
-            }
-          } catch {
-            echo "⚠️ Could not validate MSI format, but file exists"
-          }
+          # Calculate total size
+          $totalSize = (Get-ChildItem -Path "dist/2D_FEA_Windows" -Recurse | Measure-Object -Property Length -Sum).Sum
+          $totalSizeMB = [math]::Round($totalSize / 1MB, 1)
+          echo "Total distribution size: $totalSizeMB MB"
           
-          echo "✅ MSI installer validation completed"
+          echo "✅ Application directory validation completed"
           
         } else {
-          echo "❌ MSI installer not found"
+          echo "❌ Application executable not found"
           exit 1
         }
     
@@ -194,43 +191,41 @@ jobs:
       run: |
         echo "Creating distribution package..."
         
-        # Get MSI file info
-        $msiFiles = Get-ChildItem -Path "dist" -Filter "*.msi"
-        if ($msiFiles.Count -eq 0) {
-          echo "❌ No MSI files found"
+        # Check if application directory exists
+        if (-not (Test-Path "dist/2D_FEA_Windows")) {
+          echo "❌ Application directory not found"
           exit 1
         }
         
-        $msiFile = $msiFiles[0]
-        $distFolder = "2D_FEA_Windows_MSI_3.12_x64"
+        $distFolder = "2D_FEA_Windows_Directory_3.12_x64"
         New-Item -ItemType Directory -Force -Path $distFolder
         
-        # Copy MSI installer
-        Copy-Item $msiFile.FullName "$distFolder/"
+        # Copy the entire application directory
+        Copy-Item -Path "dist/2D_FEA_Windows" -Destination "$distFolder/" -Recurse
         
         # Create README for distribution
         $readme = @"
-        # 2D FEA Windows MSI Installer
+        # 2D FEA Windows Application - Directory Distribution
         
         Built on: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
         Python Version: 3.12
         Architecture: x64
-        Installer Type: MSI (Windows Installer)
+        Distribution Type: Directory (Portable)
         
         ## Installation:
         
-        1. **Download** the MSI file: $($msiFile.Name)
-        2. **Right-click** and select "Install" or double-click to run
-        3. **Follow** the installation wizard
-        4. **Launch** from Start Menu: "2D FEA Torsion Analysis"
+        1. **Extract** this ZIP file to any location (e.g., C:\Program Files\2D FEA\)
+        2. **Navigate** to the extracted 2D_FEA_Windows folder
+        3. **Run** 2D_FEA.exe to start the application
+        4. **Optional**: Create a desktop shortcut to 2D_FEA.exe
         
-        ## Features:
+        ## Advantages:
         
-        - ✅ **Professional Windows Installation** with MSI installer
-        - ✅ **Start Menu Integration** with shortcuts
-        - ✅ **Proper Uninstall Support** via Windows Control Panel
-        - ✅ **Smaller Download Size** compared to standalone EXE
-        - ✅ **System Integration** follows Windows standards
+        - ✅ **Much smaller download** compared to single EXE (~100-200MB vs 400-500MB)
+        - ✅ **Faster startup** - no extraction needed
+        - ✅ **Portable** - works from any location
+        - ✅ **No installation required** - just extract and run
+        - ✅ **Easy to move or backup** - just copy the folder
         
         ## Application Features:
         
@@ -243,26 +238,26 @@ jobs:
         ## System Requirements:
         
         - Windows 10/11 (64-bit)
-        - Administrator rights for installation
-        - ~200MB disk space after installation
+        - No Python installation required (bundled)
+        - ~200MB disk space after extraction
         
-        ## Uninstallation:
+        ## Usage:
         
-        - Open "Add or Remove Programs" in Windows Settings
-        - Find "2D FEA Torsion Analysis" and click Uninstall
-        - Or use Programs and Features in Control Panel
+        - Simply run 2D_FEA_Windows/2D_FEA.exe
+        - All dependencies are included in the folder
+        - Can be run from USB drive or network location
         
         ## Troubleshooting:
         
-        - **Installation blocked**: Right-click MSI → Properties → Unblock → OK
-        - **Windows Defender warning**: Click "More info" → "Run anyway"
-        - **Admin required**: Right-click MSI → "Run as administrator"
+        - **Windows Defender warning**: Right-click → Properties → Unblock → OK
+        - **Slow first startup**: Windows may scan all files initially
+        - **Missing files**: Ensure all files in 2D_FEA_Windows folder are present
         
         ## Build Information:
         
-        - Built with cx_Freeze and Windows Installer
+        - Built with PyInstaller directory mode
         - Includes PySide6, matplotlib, numpy, GMSH, PyVista, VTK
-        - Professional MSI installer with proper registration
+        - All files organized in structured directory layout
         
         For support, visit: https://github.com/YachtEngineeringservices/2d-FEA
         "@
@@ -282,12 +277,10 @@ jobs:
         echo "Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
         echo ""
         echo "Built Application:"
-        $msiFiles = Get-ChildItem -Path "dist" -Filter "*.msi" -ErrorAction SilentlyContinue
-        if ($msiFiles.Count -gt 0) {
-          foreach ($msi in $msiFiles) {
-            $sizeMB = $msi.Length / 1MB
-            echo "✅ $($msi.Name) ({0:N1} MB)" -f $sizeMB
-          }
+        if (Test-Path "dist/2D_FEA_Windows") {
+          $totalSize = (Get-ChildItem -Path "dist/2D_FEA_Windows" -Recurse | Measure-Object -Property Length -Sum).Sum
+          $sizeMB = [math]::Round($totalSize / 1MB, 1)
+          echo "✅ 2D_FEA_Windows directory ($sizeMB MB)"
         }
         echo ""
         echo "Distribution Packages:"
@@ -299,17 +292,17 @@ jobs:
     - name: 📤 Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: 2D-FEA-Windows-MSI-Python3.12-x64
+        name: 2D-FEA-Windows-Directory-Python3.12-x64
         path: |
-          dist/*.msi
+          dist/2D_FEA_Windows/
           *.zip
-          setup_msi.py
+          build_directory.spec
         retention-days: 30
     
     - name: 📤 Upload Distribution ZIP
       uses: actions/upload-artifact@v4
       with:
-        name: 2D-FEA-Windows-MSI-Distribution-Python3.12
+        name: 2D-FEA-Windows-Directory-Distribution-Python3.12
         path: "*.zip"
         retention-days: 90
 
@@ -327,7 +320,6 @@ jobs:
       with:
         files: |
           **/*.zip
-          **/*.msi
         draft: false
         prerelease: false
         generate_release_notes: true
