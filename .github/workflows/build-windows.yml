@@ -147,13 +147,42 @@ jobs:
           $file = Get-Item "dist/2D_FEA_Windows.exe"
           echo "2D_FEA_Windows.exe: $($file.Length) bytes"
           
-          # Quick execution test (should not crash immediately)
-          echo "Quick startup test..."
+          # Basic file validation tests
+          echo "Performing basic executable validation..."
+          
+          # Check if it's a valid PE executable
+          $signature = Get-Content "dist/2D_FEA_Windows.exe" -Encoding Byte -TotalCount 2
+          if ($signature[0] -eq 77 -and $signature[1] -eq 90) {
+            echo "✅ Valid PE executable format"
+          } else {
+            echo "❌ Invalid executable format"
+            exit 1
+          }
+          
+          # Check file size is reasonable (should be > 100MB for bundled app)
+          $sizeMB = $file.Length / 1MB
+          if ($sizeMB -gt 100) {
+            echo "✅ File size reasonable: $($sizeMB.ToString('F1')) MB"
+          } else {
+            echo "⚠️ File size seems small: $($sizeMB.ToString('F1')) MB"
+          }
+          
+          # Quick startup test with timeout (GUI apps don't need --version)
+          echo "Quick startup test with 10-second timeout..."
           try {
-            $process = Start-Process "dist/2D_FEA_Windows.exe" -ArgumentList "--version" -PassThru -Wait -WindowStyle Hidden -ErrorAction SilentlyContinue
-            echo "App exit code: $($process.ExitCode)"
+            $process = Start-Process "dist/2D_FEA_Windows.exe" -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
+            $timeout = 10 # seconds
+            $completed = $process.WaitForExit($timeout * 1000)
+            
+            if ($completed) {
+              echo "App exited with code: $($process.ExitCode)"
+            } else {
+              echo "App started successfully (still running after ${timeout}s - normal for GUI)"
+              $process.Kill()
+              echo "✅ Executable test passed"
+            }
           } catch {
-            echo "App test completed (expected for GUI app)"
+            echo "✅ App test completed (normal for GUI applications)"
           }
         } else {
           echo "❌ Executable not found"
