@@ -41,13 +41,12 @@ jobs:
         pip install gmsh meshio h5py pyvista vtk
         
         # Try to install DOLFINx (may fail on Windows)
-        try {
-          Write-Host "Attempting to install DOLFINx..."
-          pip install fenics-dolfinx
-          Write-Host "✅ DOLFINx installed successfully"
-        } catch {
-          Write-Host "⚠️ DOLFINx installation failed - will use simplified solver"
-          Write-Host "Error: $_"
+        Write-Host "Attempting to install DOLFINx..."
+        pip install fenics-dolfinx 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✅ DOLFINx installed successfully"
+        } else {
+            Write-Host "⚠️ DOLFINx installation failed - will use simplified solver"
         }
         
         # Install additional requirements if they exist
@@ -69,12 +68,14 @@ jobs:
         python -c "import h5py; print('h5py:', h5py.__version__)"
         python -c "import pyvista; print('PyVista:', pyvista.__version__)"
         
-        # Check DOLFINx availability (optional)
-        try {
-          python -c "import dolfinx; print('DOLFINx: Available')"
-        } catch {
-          Write-Host "DOLFINx: Not available (will use simplified solver)"
-        }
+        # Check DOLFINx availability (optional - don't fail if missing)
+        python -c "
+        try:
+            import dolfinx
+            print('DOLFINx: Available')
+        except ImportError:
+            print('DOLFINx: Not available (will use simplified solver)')
+        " || echo "DOLFINx check completed"
     
     - name: 🏗️ Create Build Directories
       run: |
