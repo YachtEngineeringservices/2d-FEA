@@ -29,6 +29,10 @@ matplotlib.use('Agg')
 
 # Import the same FEA components as desktop version
 try:
+    # Check if GMSH is available before importing FEA modules
+    import gmsh
+    st.write(f"✅ GMSH version: {gmsh.__version__}")
+    
     from fea import meshing, solver
     from fea.solver import solve_torsion
     FEA_AVAILABLE = True
@@ -43,6 +47,11 @@ except ImportError as e:
     st.error("🚨 **DEPLOYMENT ERROR**: This web app requires DOLFINx for proper FEA analysis")
     st.error("Please ensure DOLFINx is installed in the deployment environment")
     st.error(f"**Import Error Details**: {str(e)}")
+    
+    # Add deployment timestamp to check if rebuilding
+    import datetime
+    st.error(f"**Deployment Check**: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    
     st.stop()  # Stop the app execution
 
 def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
