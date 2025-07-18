@@ -6,8 +6,10 @@ A cross-platform 2D Finite Element Analysis application for structural and torsi
 
 - **2D FEA Simple**: Basic structural analysis with interactive GUI
 - **2D FEA Torsion Analysis**: Specialized torsional analysis tool with advanced point editing
+- **Full DOLFINx FEA Web App**: Professional finite element analysis in your browser with the same solver as desktop
 - **Interactive Point Editing**: Edit coordinates, reorder points, and delete points with intuitive controls
 - **Interactive Plot Navigation**: Zoom with mouse wheel, pan with right-click drag, click-to-select points
+- **Professional Stress Visualization**: True stress field contour plots from DOLFINx mesh
 - **Cross-platform**: Works on Windows, Linux, and web browsers
 - **Automated Windows Builds**: GitHub Actions automatically creates Windows executables
 
@@ -27,14 +29,26 @@ python src/main.py                    # 2D FEA Simple
 python src/main.py --torsion         # 2D FEA Torsion Analysis
 ```
 
-### 3. Web Application
+### 3. Web Application (Full FEA)
 ```bash
-# Install web dependencies
-pip install -r requirements.txt
+# Quick launch with full DOLFINx FEA
+./launch_web_app.sh
 
-# Run web app
+# Or manually:
+# Install web dependencies
+pip install -r requirements_web.txt
+
+# Run web app with full FEA support
 streamlit run src/web_app.py
 ```
+
+**Web App Features:**
+- **Full DOLFINx FEA**: Same professional solver as desktop version
+- **GMSH Mesh Generation**: Quality finite element meshes
+- **Professional Visualization**: True stress field contour plots
+- **Intelligent Fallback**: Graceful degradation to simplified solver if DOLFINx unavailable
+- **Browser-based**: Access from any web browser
+- **Multi-point Geometry Input**: Paste coordinates directly
 
 ## Development
 
@@ -50,7 +64,15 @@ Windows executables are automatically built via GitHub Actions when code is push
 
 - Python 3.11+
 - Dependencies listed in `requirements.txt`
-- For full FEA capabilities: DOLFINx (Linux/WSL2 only)
+- **For full FEA capabilities**: DOLFINx, GMSH (install via conda-forge)
+
+### FEA Environment Setup
+```bash
+# Create conda environment with full FEA support
+conda create -n fenics-core -c conda-forge fenics-dolfinx pyvista gmsh h5py meshio
+conda activate fenics-core
+pip install streamlit plotly
+```
 
 ## License
 
