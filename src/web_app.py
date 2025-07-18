@@ -173,27 +173,24 @@ def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
         progress_bar.progress(80)
         status_text.text("Extracting results...")
         
-        # Extract stress field data for visualization
+        # Extract stress field data for visualization BEFORE cleanup
         stress_field = None
         mesh_points = []
         
         try:
-            # Extract stress values and mesh coordinates
-            import dolfinx
-            from dolfinx import mesh as dmesh
-            
-            # Read mesh for visualization
-            mesh_file = os.path.join(output_dir, "domain.xdmf")
-            if os.path.exists(mesh_file):
-                with dolfinx.io.XDMFFile(mesh.comm, mesh_file, "r") as file:
-                    domain = file.read_mesh()
-                    
-                # Extract mesh points
-                mesh_points = domain.geometry.x
+            # Extract mesh coordinates and stress values directly from DOLFINx objects
+            # This must be done BEFORE the solver cleans up temporary files
+            if tau_magnitude is not None and V_mag is not None:
+                # Get mesh coordinates from the function space
+                mesh_coords = V_mag.tabulate_dof_coordinates()
+                mesh_points = mesh_coords.copy()  # Make a copy to survive cleanup
                 
-                # Extract stress values
-                if tau_magnitude is not None:
-                    stress_field = tau_magnitude.x.array
+                # Get stress values
+                stress_field = tau_magnitude.x.array.copy()  # Make a copy to survive cleanup
+                
+                st.success("✅ Extracted full FEA mesh data for visualization")
+            else:
+                st.warning("⚠️ Could not extract DOLFINx mesh data")
             
         except Exception as e:
             st.warning(f"Could not extract mesh visualization data: {e}")
@@ -636,7 +633,7 @@ with col2:
                 results['stress_field'] is not None and 
                 results['mesh_points'] is not None):
                 
-                # Full FEA contour plot
+                # Full FEA contour plot using proper triangulation (same as desktop)
                 try:
                     mesh_points = results['mesh_points']
                     stress_field = results['stress_field']
@@ -646,23 +643,37 @@ with col2:
                     mesh_y = mesh_points[:, 1] * 1000
                     stress_mpa = stress_field / 1e6  # Convert to MPa
                     
-                    # Create contour plot
-                    contour = ax.tricontourf(mesh_x, mesh_y, stress_mpa, 
-                                           levels=20, cmap='viridis', alpha=0.8)
+                    # Create matplotlib triangulation (same method as desktop)
+                    import matplotlib.tri as tri
+                    triang = tri.Triangulation(mesh_x, mesh_y)
+                    
+                    # Create stress visualization using tripcolor (same as desktop)
+                    contour = ax.tripcolor(triang, stress_mpa, shading='gouraud', cmap='jet', alpha=0.9)
+                    
+                    # Add contour lines for better definition
+                    try:
+                        levels = np.linspace(stress_mpa.min(), stress_mpa.max(), 10)
+                        ax.tricontour(triang, stress_mpa, levels=levels, colors='black', alpha=0.3, linewidths=0.5)
+                    except:
+                        pass  # Skip contour lines if triangulation issues
                     
                     # Add colorbar
-                    cbar = plt.colorbar(contour, ax=ax, label='Shear Stress (MPa)')
+                    cbar = plt.colorbar(contour, ax=ax, shrink=0.8, pad=0.02)
+                    cbar.set_label('Shear Stress (MPa)', rotation=270, labelpad=20, fontsize=12, fontweight='bold')
                     
-                    # Add contour lines
-                    ax.tricontour(mesh_x, mesh_y, stress_mpa, 
-                                levels=10, colors='white', alpha=0.5, linewidths=0.5)
-                    
-                    # Plot polygon outline
+                    # Plot polygon outlines
                     outer_polygon = Polygon(outer_array, fill=False, edgecolor='white', 
                                           linewidth=3, label='Outer Shape')
                     ax.add_patch(outer_polygon)
                     
-                    st.info("🎯 Showing full FEA stress field from DOLFINx mesh")
+                    # Plot inner hole if present
+                    if len(st.session_state.inner_points) >= 3:
+                        inner_array = np.array(st.session_state.inner_points)
+                        inner_polygon = Polygon(inner_array, fill=False, edgecolor='white', 
+                                              linewidth=2, label='Inner Hole')
+                        ax.add_patch(inner_polygon)
+                    
+                    st.success("🎯 Showing full FEA stress field from DOLFINx mesh (same as desktop)")
                     
                 except Exception as e:
                     st.warning(f"Could not create FEA contour plot: {e}")
