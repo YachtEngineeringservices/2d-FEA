@@ -1,13 +1,31 @@
-import dolfinx
-from dolfinx import fem, mesh, io
-from dolfinx.fem.petsc import LinearProblem
-from mpi4py import MPI
-import ufl
 import numpy as np
 import logging
 import os
 
 log = logging.getLogger(__name__)
+
+# Try to import DOLFINx components - fail gracefully if not available
+try:
+    import dolfinx
+    from dolfinx import fem, mesh, io
+    from dolfinx.fem.petsc import LinearProblem
+    from mpi4py import MPI
+    import ufl
+    DOLFINX_AVAILABLE = True
+    log.info("DOLFINx successfully imported")
+except ImportError as e:
+    DOLFINX_AVAILABLE = False
+    log.warning(f"DOLFINx not available: {e}")
+    # Define dummy classes/functions to prevent import errors
+    class DummyDOLFINx:
+        pass
+    dolfinx = DummyDOLFINx()
+    fem = DummyDOLFINx()
+    mesh = DummyDOLFINx()
+    io = DummyDOLFINx()
+    LinearProblem = DummyDOLFINx()
+    MPI = DummyDOLFINx()
+    ufl = DummyDOLFINx()
 
 def solve_torsion(mesh_dir, G, T, L):
     """

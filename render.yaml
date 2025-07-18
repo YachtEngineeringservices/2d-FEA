@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: 2d-fea-dolfinx
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter  # $7/month for 512MB RAM, 0.1 CPU
+    port: 8501
+    envVars:
+      - key: PYTHONPATH
+        value: /app/src
+      - key: STREAMLIT_SERVER_HEADLESS
+        value: "true"
+      - key: STREAMLIT_SERVER_PORT
+        value: "8501"
+      - key: STREAMLIT_SERVER_ADDRESS
+        value: "0.0.0.0"
+      - key: ENVIRONMENT
+        value: production
+    healthCheckPath: /_stcore/health
+    buildCommand: ""
+    startCommand: ""
+    autoDeploy: true
+    branch: main
+    rootDir: .
+    
+    # Custom build settings
+    buildFilter:
+      paths:
+        - src/**
+        - Dockerfile
+        - requirements_web.txt
+        - render.yaml
+      ignoredPaths:
+        - README.md
+        - "*.md"
+        - ".git/**"

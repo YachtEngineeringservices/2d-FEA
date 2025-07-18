@@ -30,6 +30,8 @@ python src/main.py --torsion         # 2D FEA Torsion Analysis
 ```
 
 ### 3. Web Application (Full FEA)
+
+#### Local Development
 ```bash
 # Quick launch with full DOLFINx FEA
 ./launch_web_app.sh
@@ -42,13 +44,22 @@ pip install -r requirements_web.txt
 streamlit run src/web_app.py
 ```
 
+#### Cloud Deployment (Render.com)
+```bash
+# Deploy to Render.com with full DOLFINx support
+./deploy_render.sh
+```
+
+**Available at**: [https://2d-fea-dolfinx.onrender.com](https://2d-fea-dolfinx.onrender.com)
+
 **Web App Features:**
 - **Full DOLFINx FEA**: Same professional solver as desktop version
 - **GMSH Mesh Generation**: Quality finite element meshes
 - **Professional Visualization**: True stress field contour plots
-- **Intelligent Fallback**: Graceful degradation to simplified solver if DOLFINx unavailable
-- **Browser-based**: Access from any web browser
+- **Always-on Service**: No cold starts, professional deployment
+- **Browser-based**: Access from any web browser worldwide
 - **Multi-point Geometry Input**: Paste coordinates directly
+- **Cost**: $7/month on Render.com (Starter plan)
 
 ## Development
 
