@@ -35,113 +35,21 @@ try:
     st.success("✅ Full FEA solver (DOLFINx) available")
 except ImportError as e:
     st.error(f"❌ FEA solver not available: {e}")
-    st.info("📝 Falling back to simplified calculations")
+    st.error("🚨 **DEPLOYMENT ERROR**: This web app requires DOLFINx for proper FEA analysis")
+    st.error("Please ensure DOLFINx is installed in the deployment environment")
+    st.stop()  # Stop the app execution
     FEA_AVAILABLE = False
-
-# Fallback simplified solver for environments without DOLFINx
-def run_simplified_fea(outer_points, inner_points, G, T, L):
-    """
-    Simplified torsional analysis fallback
-    """
-    st.warning("⚠️ Using simplified analytical solver - install DOLFINx for full FEA")
-    
-    try:
-        # Calculate area using shoelace formula
-        def polygon_area(points):
-            if len(points) < 3:
-                return 0.0
-            points = np.array(points)
-            x = points[:, 0]
-            y = points[:, 1]
-            return 0.5 * abs(sum(x[i] * y[i+1] - x[i+1] * y[i] for i in range(-1, len(x)-1)))
-        
-        # Calculate approximate polar moment
-        def polar_moment_approx(outer_pts, inner_pts):
-            outer_area = polygon_area(outer_pts)
-            inner_area = polygon_area(inner_pts) if inner_pts else 0.0
-            net_area = outer_area - inner_area
-            
-            if outer_pts:
-                outer_pts = np.array(outer_pts)
-                width = np.max(outer_pts[:, 0]) - np.min(outer_pts[:, 0])
-                height = np.max(outer_pts[:, 1]) - np.min(outer_pts[:, 1])
-                char_dim = (width + height) / 2
-            else:
-                char_dim = 1.0
-            
-            if inner_area == 0:
-                J = net_area * char_dim**2 / 6
-            else:
-                J = net_area * char_dim**2 / 8
-            
-            return max(J, 1e-12)
-        
-        # Calculate geometry properties
-        J = polar_moment_approx(outer_points, inner_points)
-        k = G * J / L
-        theta = T / k
-        
-        # Estimate stress at points
-        if outer_points:
-            outer_pts = np.array(outer_points)
-            centroid = np.mean(outer_pts, axis=0)
-            distances = np.sqrt(np.sum((outer_pts - centroid)**2, axis=1))
-            r_max = np.max(distances)
-            
-            stress_at_points = []
-            for point in outer_pts:
-                r = np.sqrt(np.sum((point - centroid)**2))
-                tau = T * r / J if J > 0 else 0
-                stress_at_points.append(tau)
-            
-            inner_stress_at_points = []
-            if inner_points:
-                inner_pts = np.array(inner_points)
-                for point in inner_pts:
-                    r = np.sqrt(np.sum((point - centroid)**2))
-                    tau = T * r / J if J > 0 else 0
-                    inner_stress_at_points.append(tau)
-        else:
-            r_max = 1.0
-            stress_at_points = []
-            inner_stress_at_points = []
-        
-        tau_max = T * r_max / J
-        
-        return {
-            'polar_moment': J,
-            'stiffness': k,
-            'twist_angle': theta,
-            'max_shear_stress': tau_max,
-            'outer_stress_values': stress_at_points,
-            'inner_stress_values': inner_stress_at_points,
-            'stress_field': None,  # No field data for simplified solver
-            'mesh_points': outer_points,
-            'success': True,
-            'solver_type': 'simplified'
-        }
-        
-    except Exception as e:
-        st.error(f"Analysis error: {str(e)}")
-        return {
-            'polar_moment': 0,
-            'stiffness': 0, 
-            'twist_angle': 0,
-            'max_shear_stress': 0,
-            'outer_stress_values': [],
-            'inner_stress_values': [],
-            'stress_field': None,
-            'mesh_points': [],
-            'success': False,
-            'solver_type': 'simplified'
-        }
 
 def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
     """
     Full FEA analysis using DOLFINx and GMSH (same as desktop version)
+    No fallback - requires DOLFINx to be available
     """
     if not FEA_AVAILABLE:
-        return run_simplified_fea(outer_points, inner_points, G, T, L)
+        st.error("🚨 **CRITICAL ERROR**: DOLFINx not available!")
+        st.error("This web app requires full FEA capability - no simplified solver available")
+        st.stop()
+        return None
     
     st.info("🔧 Running full FEA analysis with DOLFINx...")
     
@@ -236,9 +144,11 @@ def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
         }
         
     except Exception as e:
-        st.error(f"FEA analysis error: {str(e)}")
-        st.info("Falling back to simplified analysis...")
-        return run_simplified_fea(outer_points, inner_points, G, T, L)
+        st.error(f"🚨 **FEA analysis failed**: {str(e)}")
+        st.error("This deployment requires full DOLFINx functionality")
+        st.error("Please check the deployment logs and ensure DOLFINx is properly installed")
+        st.stop()
+        return None
 
 def parse_points_input(text):
     """
@@ -533,7 +443,7 @@ Format 3 (space-separated):
                 outer_points_m = [[p[0]/1000, p[1]/1000] for p in st.session_state.outer_points]
                 inner_points_m = [[p[0]/1000, p[1]/1000] for p in st.session_state.inner_points]
                 
-                # Use full FEA solver (same as desktop version)
+                # Run full FEA analysis (DOLFINx required)
                 results = run_full_fea(
                     outer_points_m, 
                     inner_points_m,
@@ -543,15 +453,15 @@ Format 3 (space-separated):
                     mesh_size / 1000  # Convert mm to m
                 )
                 
-                st.session_state.results = results
-                
-                if results['success']:
-                    if results['solver_type'] == 'full_fea':
-                        st.success("✅ Full FEA analysis completed with DOLFINx!")
+                if results is not None:
+                    st.session_state.results = results
+                    
+                    if results['success']:
+                        st.success("✅ Professional FEA analysis completed with DOLFINx!")
                     else:
-                        st.warning("⚠️ Analysis completed with simplified solver")
+                        st.error("❌ FEA analysis failed")
                 else:
-                    st.error("❌ Analysis failed")
+                    st.error("❌ Critical error: Cannot run analysis without DOLFINx")
                 st.rerun()
     
     # Results Display
@@ -628,7 +538,7 @@ with col2:
             # Plot with stress visualization
             results = st.session_state.results
             
-            # Check if we have full FEA stress field data
+            # Full FEA visualization only - no simplified fallback
             if (results['solver_type'] == 'full_fea' and 
                 results['stress_field'] is not None and 
                 results['mesh_points'] is not None):
@@ -673,68 +583,21 @@ with col2:
                                               linewidth=2, label='Inner Hole')
                         ax.add_patch(inner_polygon)
                     
-                    st.success("🎯 Showing full FEA stress field from DOLFINx mesh (same as desktop)")
+                    st.success("🎯 Professional FEA stress field visualization (DOLFINx)")
                     
                 except Exception as e:
-                    st.warning(f"Could not create FEA contour plot: {e}")
-                    # Fall back to point-based visualization
-                    show_simplified_stress = True
+                    st.error(f"Visualization error: {e}")
+                    st.error("Failed to create FEA stress visualization")
                     
             else:
-                # Simplified stress visualization
-                show_simplified_stress = True
+                st.error("🚨 **VISUALIZATION ERROR**: No valid FEA results available")
+                st.error("This should not happen if DOLFINx is properly installed")
                 
-            # Simplified stress visualization (for analytical solver or FEA fallback)
-            if 'show_simplified_stress' in locals() and show_simplified_stress:
-                stress_values = results['outer_stress_values']
-                if stress_values:
-                    stress_mpa = [s / 1e6 for s in stress_values]  # Convert to MPa
-                    
-                    # Create a filled contour plot for stress distribution
-                    from scipy.interpolate import griddata
-                    
-                    # Create a grid for interpolation
-                    x_min, x_max = np.min(outer_array[:, 0]) - 10, np.max(outer_array[:, 0]) + 10
-                    y_min, y_max = np.min(outer_array[:, 1]) - 10, np.max(outer_array[:, 1]) + 10
-                    
-                    # Create grid
-                    xi = np.linspace(x_min, x_max, 100)
-                    yi = np.linspace(y_min, y_max, 100)
-                    XI, YI = np.meshgrid(xi, yi)
-                    
-                    # Interpolate stress values
-                    ZI = griddata((outer_array[:, 0], outer_array[:, 1]), stress_mpa, (XI, YI), 
-                                method='cubic', fill_value=0)
-                    
-                    # Create a mask for the polygon area
-                    from matplotlib.path import Path
-                    polygon_path = Path(outer_array)
-                    points = np.column_stack((XI.ravel(), YI.ravel()))
-                    mask = polygon_path.contains_points(points).reshape(XI.shape)
-                    
-                    # Apply mask to stress data
-                    ZI_masked = np.where(mask, ZI, np.nan)
-                    
-                    # Create filled contour plot
-                    contour = ax.contourf(XI, YI, ZI_masked, levels=20, cmap='viridis', alpha=0.8)
-                    
-                    # Add colorbar
-                    cbar = plt.colorbar(contour, ax=ax, label='Shear Stress (MPa)')
-                    
-                    # Plot polygon outline
-                    outer_polygon = Polygon(outer_array, fill=False, edgecolor='white', linewidth=3)
-                    ax.add_patch(outer_polygon)
-                    
-                    if results['solver_type'] == 'simplified':
-                        st.info("📊 Showing interpolated stress distribution from analytical solver")
-                    else:
-                        st.info("📊 Showing stress distribution at boundary points")
-            
-            # Plot stress at boundary points with values
+            # Plot stress at boundary points with values (full FEA only)
             if results['outer_stress_values']:
                 stress_mpa = [s / 1e6 for s in results['outer_stress_values']]
                 scatter = ax.scatter(outer_array[:, 0], outer_array[:, 1], 
-                                   c=stress_mpa, s=150, cmap='viridis', 
+                                   c=stress_mpa, s=150, cmap='jet', 
                                    edgecolor='white', linewidth=2, zorder=5)
                 
                 # Label points with stress values
@@ -757,53 +620,37 @@ with col2:
                 ax.annotate(f'{i+1}', (x, y), xytext=(5, 5), textcoords='offset points',
                            fontsize=10, fontweight='bold', color='blue')
     
-    # Plot inner hole
+    # Plot inner hole (full FEA only)
     if len(st.session_state.inner_points) >= 3:
         inner_array = np.array(st.session_state.inner_points)
         
         if show_stress:
-            # Create inner hole outline (cutout for full FEA, stress points for simplified)
+            # Create inner hole outline and stress visualization
             results = st.session_state.results
             
-            if (results['solver_type'] == 'full_fea' and 
-                results['stress_field'] is not None):
-                # For full FEA, just create a white hole to show the cutout
-                inner_polygon = Polygon(inner_array, fill=True, facecolor='white', 
-                                       edgecolor='white', linewidth=3, zorder=10)
-                ax.add_patch(inner_polygon)
+            # Create inner hole as white cutout
+            inner_polygon = Polygon(inner_array, fill=True, facecolor='white', 
+                                   edgecolor='white', linewidth=3, zorder=10)
+            ax.add_patch(inner_polygon)
+            
+            # Add boundary outline
+            inner_outline = Polygon(inner_array, fill=False, edgecolor='white', 
+                                   linewidth=2, zorder=11)
+            ax.add_patch(inner_outline)
+            
+            # Plot stress points for inner boundary if available
+            if results['inner_stress_values']:
+                stress_mpa = [s / 1e6 for s in results['inner_stress_values']]
+                scatter_inner = ax.scatter(inner_array[:, 0], inner_array[:, 1], 
+                                         c=stress_mpa, s=150, cmap='jet', 
+                                         edgecolor='white', linewidth=2, zorder=15)
                 
-                # Add boundary outline
-                inner_outline = Polygon(inner_array, fill=False, edgecolor='white', 
-                                       linewidth=2, zorder=11)
-                ax.add_patch(inner_outline)
-                
-            else:
-                # Plot with stress coloring for simplified solver
-                stress_values = results['inner_stress_values']
-                if stress_values:  # Only if we have stress data
-                    stress_mpa = [s / 1e6 for s in stress_values]  # Convert to MPa
-                    
-                    # Create inner hole outline (cutout)
-                    inner_polygon = Polygon(inner_array, fill=True, facecolor='white', 
-                                           edgecolor='white', linewidth=3, zorder=10)
-                    ax.add_patch(inner_polygon)
-                    
-                    # Plot stress points for inner boundary
-                    scatter_inner = ax.scatter(inner_array[:, 0], inner_array[:, 1], 
-                                             c=stress_mpa, s=150, cmap='viridis', 
-                                             edgecolor='white', linewidth=2, zorder=15)
-                    
-                    # Label points with stress values
-                    for i, ((x, y), stress) in enumerate(zip(inner_array, stress_mpa)):
-                        ax.annotate(f'{i+1}\n{stress:.1f}', (x, y), xytext=(5, 5), 
-                                   textcoords='offset points', fontsize=9, 
-                                   fontweight='bold', color='black',
-                                   bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.9))
-                else:
-                    # Just show the hole outline
-                    inner_polygon = Polygon(inner_array, fill=True, facecolor='white', 
-                                           edgecolor='white', linewidth=3, zorder=10)
-                    ax.add_patch(inner_polygon)
+                # Label points with stress values
+                for i, ((x, y), stress) in enumerate(zip(inner_array, stress_mpa)):
+                    ax.annotate(f'{i+1}\n{stress:.1f}', (x, y), xytext=(5, 5), 
+                               textcoords='offset points', fontsize=9, 
+                               fontweight='bold', color='black',
+                               bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.9))
         else:
             # Regular geometry view
             inner_polygon = Polygon(inner_array, alpha=0.8, facecolor='white', 
@@ -863,23 +710,15 @@ with col2:
         results = st.session_state.results
         max_stress_mpa = results['max_shear_stress'] / 1e6
         
-        if results['solver_type'] == 'full_fea':
-            instructions = f"""
-            **Full FEA Analysis Results (DOLFINx):**
-            - Max shear stress: **{max_stress_mpa:.2f} MPa**
-            - Professional finite element analysis with mesh generation
-            - Stress field computed from DOLFINx solver
-            - Contour plot shows actual stress distribution throughout the domain
-            - Numbers show point ID and stress value at boundary points (MPa)
-            """
-        else:
-            instructions = f"""
-            **Simplified Analysis Results:**
-            - Max shear stress: **{max_stress_mpa:.2f} MPa**
-            - Analytical torsion formulas with interpolated stress field
-            - Install DOLFINx for full FEA capability
-            - Numbers show point ID and stress value (MPa)
-            """
+        instructions = f"""
+        **Professional FEA Analysis Results (DOLFINx):**
+        - Max shear stress: **{max_stress_mpa:.2f} MPa**
+        - Full finite element analysis with mesh generation
+        - Stress field computed from DOLFINx solver
+        - Contour plot shows actual stress distribution throughout the domain
+        - Numbers show point ID and stress value at boundary points (MPa)
+        - Identical results to desktop version
+        """
     else:
         instructions = f"""
         **Instructions:**
@@ -888,7 +727,7 @@ with col2:
         - Minimum 3 points required for each shape
         - Points will be connected in order to form the shape
         - Use Quick Shapes or paste coordinate data
-        - Analysis will use {'full DOLFINx FEA' if FEA_AVAILABLE else 'simplified analytical solver'}
+        - Analysis uses full DOLFINx FEA (same as desktop version)
         """
     
     st.pyplot(fig)
@@ -896,11 +735,10 @@ with col2:
 
 # Footer
 st.markdown("---")
-solver_status = "🚀 Full DOLFINx FEA" if FEA_AVAILABLE else "⚠️ Simplified Analytical"
 st.markdown(f"""
 <div style='text-align: center; color: #666; padding: 20px;'>
-    <p><strong>2D FEA Torsion Analysis</strong> - Web Version ({solver_status})</p>
-    <p>Professional finite element analysis with GMSH meshing and DOLFINx solver</p>
+    <p><strong>2D FEA Torsion Analysis</strong> - Professional Web Version</p>
+    <p>Full DOLFINx finite element analysis with GMSH meshing - Same as desktop version</p>
     <p>Developed by <strong>Yacht Engineering Services</strong> | Built with Streamlit</p>
     <p>
         <a href='https://github.com/YachtEngineeringservices/2d-FEA' target='_blank'>GitHub Repository</a> | 
