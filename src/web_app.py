@@ -29,15 +29,45 @@ matplotlib.use('Agg')
 
 # Import the same FEA components as desktop version
 try:
+    # Add debugging information
+    import sys
+    st.write(f"**Debug Info:** Python path: {sys.path}")
+    st.write(f"**Debug Info:** Current working directory: {os.getcwd()}")
+    st.write(f"**Debug Info:** Files in current directory: {os.listdir('.')}")
+    
     from fea import meshing, solver
     from fea.solver import solve_torsion
     FEA_AVAILABLE = True
     st.success("✅ Full FEA solver (DOLFINx) available")
+    
+    # Verify the imported modules are not None
+    if meshing is None or solver is None:
+        raise ImportError("FEA modules imported but are None")
+    
 except ImportError as e:
     st.error(f"❌ FEA solver not available: {e}")
     st.error("🚨 **DEPLOYMENT ERROR**: This web app requires DOLFINx for proper FEA analysis")
     st.error("Please ensure DOLFINx is installed in the deployment environment")
+    st.error(f"**Import Error Details**: {str(e)}")
+    
+    # Show more debugging information
+    import sys
+    st.error(f"**Debug Info:** Python path: {sys.path}")
+    st.error(f"**Debug Info:** Current working directory: {os.getcwd()}")
+    try:
+        st.error(f"**Debug Info:** Files in current directory: {os.listdir('.')}")
+        if os.path.exists('src'):
+            st.error(f"**Debug Info:** Files in src directory: {os.listdir('src')}")
+        if os.path.exists('src/fea'):
+            st.error(f"**Debug Info:** Files in src/fea directory: {os.listdir('src/fea')}")
+    except Exception as debug_e:
+        st.error(f"**Debug Error:** {debug_e}")
+    
     st.stop()  # Stop the app execution
+    # These variables won't be reached due to st.stop(), but define them for completeness
+    meshing = None
+    solver = None
+    solve_torsion = None
     FEA_AVAILABLE = False
 
 def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
@@ -68,7 +98,9 @@ def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
         
         if not output_dir:
             st.error("❌ Mesh generation failed")
-            return run_simplified_fea(outer_points, inner_points, G, T, L)
+            st.error("🚨 Critical error: Cannot proceed without valid mesh")
+            st.stop()
+            return None
         
         progress_bar.progress(50)
         status_text.text("Solving with DOLFINx...")
