@@ -9,10 +9,7 @@ RUN apt-get update && apt-get install -y \
     libgmsh-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install conda packages first (including GMSH)
-RUN conda install -c conda-forge gmsh meshio -y
-
-# Install Streamlit and other Python packages
+# Install Streamlit and other Python packages (including GMSH Python bindings)
 RUN pip3 install --no-cache-dir \
     streamlit==1.32.0 \
     matplotlib==3.8.3 \
@@ -22,7 +19,8 @@ RUN pip3 install --no-cache-dir \
     plotly==5.19.0 \
     meshio==5.3.4 \
     h5py==3.10.0 \
-    xarray==2024.2.0
+    xarray==2024.2.0 \
+    gmsh==4.11.1
 
 # Create app directory
 WORKDIR /app
