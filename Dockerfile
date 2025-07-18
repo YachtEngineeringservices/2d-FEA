@@ -25,7 +25,6 @@ WORKDIR /app
 # Copy application code
 COPY src/ /app/src/
 COPY requirements_web.txt /app/
-COPY output/ /app/output/
 
 # Set environment variables
 ENV PYTHONPATH=/app/src:$PYTHONPATH
