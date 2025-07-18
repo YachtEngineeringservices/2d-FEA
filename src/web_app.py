@@ -15,6 +15,14 @@ from matplotlib.patches import Polygon
 from matplotlib.colors import LinearSegmentedColormap
 import shutil
 
+# Configure page FIRST - must be the very first Streamlit command
+st.set_page_config(
+    page_title="2D FEA Torsion Analysis - Yacht Engineering Services",
+    page_icon="🔧",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 # Set matplotlib backend for cloud environment
 import matplotlib
 matplotlib.use('Agg')
@@ -305,14 +313,6 @@ def parse_points_input(text):
                     continue
     
     return points
-
-# Configure page
-st.set_page_config(
-    page_title="2D FEA Torsion Analysis - Yacht Engineering Services",
-    page_icon="🔧",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # Initialize session state
 if 'outer_points' not in st.session_state:
