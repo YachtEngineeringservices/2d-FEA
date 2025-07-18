@@ -19,15 +19,30 @@ A cross-platform 2D Finite Element Analysis application for structural and torsi
 - Download from GitHub Releases
 - No installation required - run directly
 
-### 2. WSL2/Linux
+### 2. WSL2/Linux Desktop
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Quick launch (recommended)
+./launch_fea.sh
+
+# Or manually:
+# Activate FEA environment
+conda activate fenics-core
+
+# Install desktop dependencies (if not already installed)
+pip install PySide6 pyvista
 
 # Run applications
-python src/main.py                    # 2D FEA Simple
-python src/main.py --torsion         # 2D FEA Torsion Analysis
+python src/main.py                    # 2D FEA Torsion Analysis (GUI)
+python src/main.py --torsion         # Same as above
 ```
+
+**Desktop Features:**
+- **Full DOLFINx FEA**: Professional finite element solver
+- **Interactive GUI**: PySide6-based desktop application
+- **GMSH Integration**: Quality mesh generation
+- **3D Visualization**: PyVista-based result visualization
+- **Point Editing**: Interactive geometry creation
+- **Real-time Analysis**: Immediate FEA results
 
 ### 3. Web Application (Full FEA)
 

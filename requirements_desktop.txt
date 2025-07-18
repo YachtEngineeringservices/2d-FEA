@@ -1,0 +1,27 @@
+# Desktop Application Requirements
+# For running the PySide6 GUI version with full FEA support
+
+# GUI Framework
+PySide6>=6.5.0
+
+# Scientific Computing
+numpy>=1.24.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+
+# FEA and Visualization
+pyvista>=0.42.0
+
+# FEA Backend (installed via conda-forge)
+# These should be installed separately via conda:
+# conda install -c conda-forge fenics-dolfinx gmsh h5py meshio
+
+# Additional mesh I/O
+# meshio>=5.3.0  # Usually comes with pyvista
+# h5py>=3.9.0    # Usually comes with dolfinx
+
+# System compatibility
+# Note: For best compatibility, use conda environment:
+# conda create -n fea-desktop -c conda-forge fenics-dolfinx pyvista gmsh h5py meshio
+# conda activate fea-desktop
+# pip install -r requirements_desktop.txt

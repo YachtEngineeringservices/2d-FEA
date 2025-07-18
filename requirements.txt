@@ -1,19 +1,27 @@
-# Requirements for Streamlit Cloud deployment
-# Optimized for web-based 2D FEA application
+# Desktop Application Requirements
+# For running the PySide6 GUI version with full DOLFINx FEA support
 
-# Core Streamlit
-streamlit>=1.28.0
+# GUI Framework
+PySide6>=6.5.0
 
-# Scientific computing
+# Scientific Computing
 numpy>=1.24.0
-matplotlib>=3.7.0
 scipy>=1.10.0
+matplotlib>=3.7.0
 
-# Optional visualization enhancement
+# 3D Visualization
+pyvista>=0.42.0
+
+# Web App Support (optional)
+streamlit>=1.28.0
 plotly>=5.15.0
-
-# Data handling
 pandas>=2.0.0
 
-# Note: GMSH and other heavy dependencies excluded for cloud compatibility
-# The web app uses simplified analytical calculations instead of full FEA
+# FEA Backend (install via conda-forge for best results)
+# conda install -c conda-forge fenics-dolfinx gmsh h5py meshio
+# Then: pip install -r requirements.txt
+
+# Note: For production FEA work, use conda environment:
+# conda create -n fea-env -c conda-forge fenics-dolfinx pyvista gmsh h5py meshio
+# conda activate fea-env
+# pip install PySide6 streamlit plotly pandas
