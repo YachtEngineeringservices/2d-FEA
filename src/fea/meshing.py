@@ -2,8 +2,157 @@ import gmsh
 import meshio
 import logging
 import os
+import signal
+import threading
 
 log = logging.getLogger(__name__)
+
+import gmsh
+import meshio
+import logging
+import os
+import signal
+import threading
+import multiprocessing
+import subprocess
+import sys
+
+log = logging.getLogger(__name__)
+
+def create_mesh_subprocess(outer_points, inner_points, mesh_size, output_dir):
+    """Run GMSH mesh generation in a separate process to avoid signal conflicts."""
+    
+    # Create a temporary Python script to run GMSH
+    script_content = f'''
+import gmsh
+import meshio
+import os
+import sys
+
+def create_polygon(points, mesh_size):
+    """Helper function to create a gmsh polygon from a list of points."""
+    gmsh_points = []
+    for p in points:
+        gmsh_points.append(gmsh.model.geo.addPoint(p[0], p[1], 0, meshSize=mesh_size))
+    
+    lines = []
+    for i in range(len(gmsh_points)):
+        p1 = gmsh_points[i]
+        p2 = gmsh_points[(i + 1) % len(gmsh_points)]
+        lines.append(gmsh.model.geo.addLine(p1, p2))
+        
+    loop = gmsh.model.geo.addCurveLoop(lines)
+    return loop
+
+def main():
+    outer_points = {outer_points}
+    inner_points = {inner_points}
+    mesh_size = {mesh_size}
+    output_dir = "{output_dir}"
+    
+    try:
+        # Initialize GMSH in subprocess (no signal conflicts)
+        gmsh.initialize()
+        gmsh.model.add("torsion_section")
+        
+        # Create the outer polygon
+        outer_loop = create_polygon(outer_points, mesh_size)
+        
+        # Create the inner polygon (hole) if it exists
+        loops = [outer_loop]
+        if inner_points:
+            inner_loop = create_polygon(inner_points, mesh_size)
+            loops.append(inner_loop)
+
+        # Synchronize the geometry first
+        gmsh.model.geo.synchronize()
+        
+        # Create the surface
+        surface = gmsh.model.geo.addPlaneSurface(loops)
+        
+        # Synchronize again after creating the surface
+        gmsh.model.geo.synchronize()
+
+        # Add Physical Groups
+        gmsh.model.addPhysicalGroup(2, [surface], 1)
+        boundary_entities = gmsh.model.getBoundary([(2, surface)])
+        boundary_lines = [ent[1] for ent in boundary_entities]
+        gmsh.model.addPhysicalGroup(1, boundary_lines, 2)
+        
+        # Generate the 2D mesh
+        gmsh.model.mesh.generate(2)
+        
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Save mesh
+        msh_filename = os.path.join(output_dir, "mesh.msh")
+        gmsh.write(msh_filename)
+        gmsh.finalize()
+        
+        # Convert to XDMF
+        msh = meshio.read(msh_filename)
+        triangle_cells = msh.get_cells_type("triangle")
+        triangle_data = msh.get_cell_data("gmsh:physical", "triangle")
+        
+        domain_mesh = meshio.Mesh(
+            points=msh.points,
+            cells=[("triangle", triangle_cells)],
+            cell_data={{"name_to_read": [triangle_data]}}
+        )
+
+        line_cells = msh.get_cells_type("line")
+        line_data = msh.get_cell_data("gmsh:physical", "line")
+        
+        facet_mesh = meshio.Mesh(
+            points=msh.points,
+            cells=[("line", line_cells)],
+            cell_data={{"name_to_read": [line_data]}}
+        )
+
+        meshio.write(os.path.join(output_dir, "domain.xdmf"), domain_mesh)
+        meshio.write(os.path.join(output_dir, "facets.xdmf"), facet_mesh)
+        
+        # Clean up MSH file
+        os.remove(msh_filename)
+        
+        print("SUCCESS")
+        
+    except Exception as e:
+        print(f"ERROR: {{e}}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+'''
+    
+    # Write the script to a temporary file
+    script_path = os.path.join(output_dir, "gmsh_subprocess.py")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    with open(script_path, 'w') as f:
+        f.write(script_content)
+    
+    # Run the script in a subprocess
+    try:
+        result = subprocess.run([sys.executable, script_path], 
+                              capture_output=True, text=True, timeout=60)
+        
+        # Clean up the temporary script
+        os.remove(script_path)
+        
+        if result.returncode == 0 and "SUCCESS" in result.stdout:
+            return output_dir
+        else:
+            log.error(f"GMSH subprocess failed: {result.stderr}")
+            return None
+            
+    except subprocess.TimeoutExpired:
+        log.error("GMSH subprocess timed out")
+        return None
+    except Exception as e:
+        log.error(f"Failed to run GMSH subprocess: {e}")
+        return None
 
 def validate_polygon(points):
     """Validate if points form a simple (non-self-intersecting) polygon."""
@@ -48,7 +197,7 @@ def create_polygon(points, mesh_size):
 
 def create_mesh(outer_points, inner_points, mesh_size):
     """
-    Creates a 2D mesh, potentially with a hole.
+    Creates a 2D mesh using subprocess to avoid signal conflicts with Streamlit.
     
     Args:
         outer_points (list): A list of (x, y) coordinates for the outer polygon.
@@ -58,110 +207,20 @@ def create_mesh(outer_points, inner_points, mesh_size):
     Returns:
         str: The path to the output directory.
     """
-    log.info(f"Initializing gmsh for meshing with {len(outer_points)} outer points, "
+    log.info(f"Creating mesh using subprocess with {len(outer_points)} outer points, "
              f"{len(inner_points)} inner points, and mesh size {mesh_size}.")
     log.info(f"Outer points: {outer_points}")
     if inner_points:
         log.info(f"Inner points: {inner_points}")
-        
-    gmsh.initialize()
-    gmsh.model.add("torsion_section")
-
-    try:
-        # Create the outer polygon
-        outer_loop = create_polygon(outer_points, mesh_size)
-        
-        # Create the inner polygon (hole) if it exists
-        loops = [outer_loop]
-        if inner_points:
-            inner_loop = create_polygon(inner_points, mesh_size)
-            loops.append(inner_loop)
-
-        # Synchronize the geometry first
-        gmsh.model.geo.synchronize()
-        
-        # Create the surface, subtracting the inner loop if it exists
-        surface = gmsh.model.geo.addPlaneSurface(loops)
-        
-        # Synchronize again after creating the surface
-        gmsh.model.geo.synchronize()
-
-        # --- Add Physical Groups ---
-        # This is the crucial step to label the domain and boundary
-        gmsh.model.addPhysicalGroup(2, [surface], 1) # Tag for the surface (domain)
-        
-        # Get all boundary lines. Gmsh automatically knows the boundaries of the surface.
-        boundary_entities = gmsh.model.getBoundary([(2, surface)])
-        boundary_lines = [ent[1] for ent in boundary_entities]
-        gmsh.model.addPhysicalGroup(1, boundary_lines, 2) # Tag for all boundary lines
-        
-        # Generate the 2D mesh
-        gmsh.model.mesh.generate(2)
-        
-    except Exception as e:
-        log.error(f"GMSH geometry/mesh generation failed: {e}")
-        # Save the geometry for debugging
-        try:
-            gmsh.write("debug_geometry.geo_unrolled")
-            log.info("Debug geometry saved to debug_geometry.geo_unrolled")
-        except:
-            pass
-        gmsh.finalize()
-        raise
-
-    # --- Save the mesh to a file ---
-    output_dir = "output"
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        log.info(f"Created output directory: {output_dir}")
-
-    msh_filename = os.path.join(output_dir, "mesh.msh")
     
-    log.info(f"Writing mesh to {msh_filename}")
-    gmsh.write(msh_filename)
-    gmsh.finalize()
-
-    # --- Convert MSH to XDMF for dolfinx ---
-    log.info(f"Converting {msh_filename} to XDMF format using meshio.")
-    try:
-        msh = meshio.read(msh_filename)
-
-        # Extract cells and data for triangles (domain)
-        triangle_cells = msh.get_cells_type("triangle")
-        triangle_data = msh.get_cell_data("gmsh:physical", "triangle")
-        
-        # Create a new meshio.Mesh object for the domain, keeping only the domain cells
-        domain_mesh = meshio.Mesh(
-            points=msh.points,
-            cells=[("triangle", triangle_cells)],
-            cell_data={"name_to_read": [triangle_data]}
-        )
-
-        # Extract cells and data for lines (facets/boundary)
-        line_cells = msh.get_cells_type("line")
-        line_data = msh.get_cell_data("gmsh:physical", "line")
-        
-        # Create a new meshio.Mesh object for the facets
-        facet_mesh = meshio.Mesh(
-            points=msh.points,
-            cells=[("line", line_cells)],
-            cell_data={"name_to_read": [line_data]}
-        )
-
-        # Write the domain and facet meshes to XDMF files
-        meshio.write(os.path.join(output_dir, "domain.xdmf"), domain_mesh)
-        meshio.write(os.path.join(output_dir, "facets.xdmf"), facet_mesh)
-        log.info("Successfully created domain.xdmf and facets.xdmf")
-
-        # Clean up intermediate MSH file after successful conversion
-        try:
-            os.remove(msh_filename)
-            log.info(f"Cleaned up intermediate file: {msh_filename}")
-        except OSError as e:
-            log.warning(f"Could not remove intermediate file {msh_filename}: {e}")
-
-    except Exception as e:
-        log.error("Failed to convert MSH to XDMF.", exc_info=True)
-        raise
-
-    return output_dir
+    output_dir = "output"
+    
+    # Use subprocess approach to avoid signal conflicts
+    result = create_mesh_subprocess(outer_points, inner_points, mesh_size, output_dir)
+    
+    if result:
+        log.info("Mesh generation completed successfully using subprocess")
+        return result
+    else:
+        log.error("Mesh generation failed")
+        return None

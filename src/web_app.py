@@ -126,21 +126,62 @@ def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
         outer_stress_values = []
         inner_stress_values = []
         
-        if outer_points:
-            outer_pts = np.array(outer_points)
-            centroid = np.mean(outer_pts, axis=0)
-            
-            for point in outer_pts:
-                r = np.sqrt(np.sum((point - centroid)**2))
-                tau = T * r / J if J > 0 else 0
-                outer_stress_values.append(tau)
-            
-            if inner_points:
-                inner_pts = np.array(inner_points)
-                for point in inner_pts:
+        # Use actual FEA stress field instead of simplified formula
+        if stress_field is not None and mesh_points is not None:
+            try:
+                # Ensure mesh_points is 2D (x,y coordinates only)
+                if mesh_points.shape[1] > 2:
+                    mesh_coords_2d = mesh_points[:, :2]  # Take only x,y coordinates
+                else:
+                    mesh_coords_2d = mesh_points
+                
+                # Find stress values at boundary points from the actual FEA mesh
+                if outer_points:
+                    outer_pts = np.array(outer_points)
+                    for point in outer_pts:
+                        # Ensure point is 2D
+                        point_2d = np.array(point[:2]) if len(point) > 2 else np.array(point)
+                        # Find closest mesh point to this boundary point
+                        distances = np.sqrt(np.sum((mesh_coords_2d - point_2d)**2, axis=1))
+                        closest_idx = np.argmin(distances)
+                        # Use actual FEA stress value
+                        actual_stress = stress_field[closest_idx]
+                        outer_stress_values.append(actual_stress)
+                    
+                if inner_points:
+                    inner_pts = np.array(inner_points)
+                    for point in inner_pts:
+                        # Ensure point is 2D
+                        point_2d = np.array(point[:2]) if len(point) > 2 else np.array(point)
+                        # Find closest mesh point to this boundary point
+                        distances = np.sqrt(np.sum((mesh_coords_2d - point_2d)**2, axis=1))
+                        closest_idx = np.argmin(distances)
+                        # Use actual FEA stress value
+                        actual_stress = stress_field[closest_idx]
+                        inner_stress_values.append(actual_stress)
+                        
+            except Exception as e:
+                st.warning(f"Could not extract boundary stress from FEA mesh: {e}")
+                # Fall back to simplified calculation
+                stress_field = None  # Trigger fallback
+        
+        if stress_field is None:
+            # Fallback: Use simplified approximation only if FEA data unavailable
+            if outer_points:
+                outer_pts = np.array(outer_points)
+                centroid = np.mean(outer_pts, axis=0)
+                
+                for point in outer_pts:
                     r = np.sqrt(np.sum((point - centroid)**2))
                     tau = T * r / J if J > 0 else 0
-                    inner_stress_values.append(tau)
+                    outer_stress_values.append(tau)
+                
+                if inner_points:
+                    inner_pts = np.array(inner_points)
+                    for point in inner_pts:
+                        r = np.sqrt(np.sum((point - centroid)**2))
+                        tau = T * r / J if J > 0 else 0
+                        inner_stress_values.append(tau)
         
         # Clear progress indicators
         progress_bar.empty()
@@ -360,8 +401,23 @@ Format 3 (space-separated):
         points_df = pd.DataFrame(current_points, columns=['X (mm)', 'Y (mm)'])
         points_df.index = points_df.index + 1  # Start from 1 instead of 0
         
-        # Show the dataframe
-        st.dataframe(points_df, use_container_width=True)
+        # Show the editable dataframe
+        edited_df = st.data_editor(
+            points_df, 
+            use_container_width=True,
+            num_rows="dynamic",  # Allow adding/removing rows
+            key=f"points_editor_{geometry_tab.lower().replace(' ', '_')}"
+        )
+        
+        # Update session state when points are edited
+        if not edited_df.equals(points_df):
+            # Convert back to list of tuples and update session state
+            new_points = [(float(row['X (mm)']), float(row['Y (mm)'])) for _, row in edited_df.iterrows()]
+            if geometry_tab == "Outer Shape":
+                st.session_state.outer_points = new_points
+            else:
+                st.session_state.inner_points = new_points
+            st.rerun()
         
         # Point management buttons
         col_clear, col_remove = st.columns(2)
@@ -616,12 +672,13 @@ with col2:
                                    c=stress_mpa, s=150, cmap='jet', 
                                    edgecolor='white', linewidth=2, zorder=5)
                 
-                # Label points with stress values
-                for i, ((x, y), stress) in enumerate(zip(outer_array, stress_mpa)):
-                    ax.annotate(f'{i+1}\n{stress:.1f}', (x, y), xytext=(5, 5), 
-                               textcoords='offset points', fontsize=9, 
-                               fontweight='bold', color='white',
-                               bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7))
+                # Add stress value annotations with actual FEA values
+                for i, (x, y) in enumerate(outer_array):
+                    if i < len(stress_mpa):
+                        ax.annotate(f'{i+1}\n{stress_mpa[i]:.1f}', (x, y), 
+                                  xytext=(8, 8), textcoords='offset points',
+                                  fontsize=9, fontweight='bold', color='white',
+                                  bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7))
         else:
             # Regular geometry view
             outer_polygon = Polygon(outer_array, alpha=0.3, facecolor='lightblue', 
@@ -630,11 +687,6 @@ with col2:
             
             # Plot outer points
             ax.scatter(outer_array[:, 0], outer_array[:, 1], c='blue', s=100, zorder=5)
-            
-            # Label outer points
-            for i, (x, y) in enumerate(outer_array):
-                ax.annotate(f'{i+1}', (x, y), xytext=(5, 5), textcoords='offset points',
-                           fontsize=10, fontweight='bold', color='blue')
     
     # Plot inner hole (full FEA only)
     if len(st.session_state.inner_points) >= 3:
@@ -661,12 +713,13 @@ with col2:
                                          c=stress_mpa, s=150, cmap='jet', 
                                          edgecolor='white', linewidth=2, zorder=15)
                 
-                # Label points with stress values
-                for i, ((x, y), stress) in enumerate(zip(inner_array, stress_mpa)):
-                    ax.annotate(f'{i+1}\n{stress:.1f}', (x, y), xytext=(5, 5), 
-                               textcoords='offset points', fontsize=9, 
-                               fontweight='bold', color='black',
-                               bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.9))
+                # Add stress value annotations for inner points with actual FEA values
+                for i, (x, y) in enumerate(inner_array):
+                    if i < len(stress_mpa):
+                        ax.annotate(f'{i+1}\n{stress_mpa[i]:.1f}', (x, y), 
+                                  xytext=(8, 8), textcoords='offset points',
+                                  fontsize=9, fontweight='bold', color='black',
+                                  bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
         else:
             # Regular geometry view
             inner_polygon = Polygon(inner_array, alpha=0.8, facecolor='white', 
@@ -675,11 +728,6 @@ with col2:
             
             # Plot inner points
             ax.scatter(inner_array[:, 0], inner_array[:, 1], c='red', s=100, zorder=5)
-            
-            # Label inner points
-            for i, (x, y) in enumerate(inner_array):
-                ax.annotate(f'{i+1}', (x, y), xytext=(5, 5), textcoords='offset points',
-                           fontsize=10, fontweight='bold', color='red')
     
     # Plot individual points for active geometry (only in geometry view)
     if not show_stress:
