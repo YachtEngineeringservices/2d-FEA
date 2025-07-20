@@ -6,53 +6,31 @@ Professional FEA analysis in your web browser
 
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
-import json
-import tempfile
-import os
-from matplotlib.patches import Polygon
-from matplotlib.colors import LinearSegmentedColormap
-import shutil
+import matplotlib.pyplot as plt
+import logging
+import sys
+from fea import meshing, solver
 
-# Configure page FIRST - must be the very first Streamlit command
+# --- Page Config ---
+# This must be the first Streamlit command in the script
 st.set_page_config(
-    page_title="2D FEA Torsion Analysis - Yacht Engineering Services",
-    page_icon="🔧",
+    page_title="2D FEA Torsion Analysis",
+    page_icon=" torsional_analysis.png",
     layout="wide",
-    initial_sidebar_state="expanded"
 )
 
-# Set matplotlib backend for cloud environment
-import matplotlib
-matplotlib.use('Agg')
+# --- Logging Setup ---
+# Configure logging to display info level messages
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log = logging.getLogger(__name__)
 
-# Import the same FEA components as desktop version
+# --- Check for DOLFINx ---
 try:
-    # Check if GMSH is available before importing FEA modules
-    import gmsh
-    st.write(f"✅ GMSH version: {gmsh.__version__}")
-    
-    from fea import meshing, solver
-    from fea.solver import solve_torsion
+    import dolfinx
     FEA_AVAILABLE = True
-    st.success("✅ Full FEA solver (DOLFINx) available")
-    
-    # Verify the imported modules are not None
-    if meshing is None or solver is None:
-        raise ImportError("FEA modules imported but are None - check fea/__init__.py")
-    
-except ImportError as e:
-    st.error(f"❌ FEA solver not available: {e}")
-    st.error("🚨 **DEPLOYMENT ERROR**: This web app requires DOLFINx for proper FEA analysis")
-    st.error("Please ensure DOLFINx is installed in the deployment environment")
-    st.error(f"**Import Error Details**: {str(e)}")
-    
-    # Add deployment timestamp to check if rebuilding
-    import datetime
-    st.error(f"**Deployment Check**: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
-    
-    st.stop()  # Stop the app execution
+except ImportError:
+    FEA_AVAILABLE = False
 
 def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
     """
@@ -60,18 +38,16 @@ def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
     No fallback - requires DOLFINx to be available
     """
     if not FEA_AVAILABLE:
-        st.error("🚨 **CRITICAL ERROR**: DOLFINx not available!")
-        st.error("This web app requires full FEA capability - no simplified solver available")
-        st.stop()
+        st.error("DOLFINx is not available in this environment. Cannot run Full FEA.")
         return None
+        
+    status_text = st.empty()
+    progress_bar = st.progress(0)
     
     st.info("🔧 Running full FEA analysis with DOLFINx...")
     
     try:
         # Generate mesh using GMSH (same as desktop)
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
         status_text.text("Generating mesh with GMSH...")
         progress_bar.progress(20)
         
@@ -86,20 +62,32 @@ def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
             st.stop()
             return None
         
-        progress_bar.progress(50)
+        progress_bar.progress(25)
+    
+        # --- 2. Solve the FEA problem ---
         status_text.text("Solving with DOLFINx...")
+        try:
+            # Call the solver function from the solver module
+            J, k, theta_deg, V_mag, tau_magnitude, max_stress_val = solver.solve_torsion(
+                domain_mesh, facet_mesh, G, T, L
+            )
+            log.info(f"FEA solver completed: J={J:.4e}, k={k:.4e}, max_stress={max_stress_val/1e6:.2f} MPa")
+        except Exception as e:
+            log.error(f"FEA solver failed: {e}", exc_info=True)
+            st.error(f"FEA analysis failed: {e}")
+            st.error("This deployment requires full DOLFINx functionality")
+            st.error("Please check the deployment logs and ensure DOLFINx is properly installed")
+            return None
         
-        # Use the same solver as desktop
-        J, k, theta, tau_max, tau_magnitude, V_mag = solve_torsion(
-            output_dir, G, T, L
-        )
-        
-        progress_bar.progress(80)
+        progress_bar.progress(75)
+    
+        # --- 3. Extract results for visualization ---
         status_text.text("Extracting results...")
         
         # Extract stress field data for visualization BEFORE cleanup
         stress_field = None
         mesh_points = []
+        mesh_triangles = None
         
         try:
             # Extract mesh coordinates and stress values directly from DOLFINx objects
@@ -112,12 +100,26 @@ def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
                 # Get stress values
                 stress_field = tau_magnitude.x.array.copy()  # Make a copy to survive cleanup
                 
-                st.success("✅ Extracted full FEA mesh data for visualization")
+                # Extract mesh triangulation topology
+                domain = V_mag.mesh
+                topology = domain.topology
+                cell_map = topology.index_map(topology.dim)
+                num_cells = cell_map.size_local
+                
+                # Get the triangles (cells) connectivity
+                cells = topology.connectivity(topology.dim, 0)  # Cell-to-vertex connectivity
+                mesh_triangles = np.zeros((num_cells, 3), dtype=np.int32)
+                for i in range(num_cells):
+                    cell_vertices = cells.links(i)
+                    mesh_triangles[i] = cell_vertices[:3]  # Take first 3 vertices for triangle
+                
+                st.success("✅ Extracted full FEA mesh data with triangulation for visualization")
             else:
                 st.warning("⚠️ Could not extract DOLFINx mesh data")
             
         except Exception as e:
             st.warning(f"Could not extract mesh visualization data: {e}")
+            mesh_triangles = None
         
         progress_bar.progress(100)
         status_text.text("✅ Analysis complete!")
@@ -196,6 +198,7 @@ def run_full_fea(outer_points, inner_points, G, T, L, mesh_size=0.01):
             'inner_stress_values': inner_stress_values,
             'stress_field': stress_field,
             'mesh_points': mesh_points,
+            'mesh_triangles': mesh_triangles,
             'success': True,
             'solver_type': 'full_fea'
         }
@@ -287,526 +290,300 @@ if 'active_tab' not in st.session_state:
     st.session_state.active_tab = "Outer Shape"
 if 'results' not in st.session_state:
     st.session_state.results = None
-
-# Header
-st.title("🔧 2D FEA Torsion Analysis")
-st.markdown("**Web-based Finite Element Analysis for Torsional Loading**")
-st.markdown("*Interactive cross-section geometry editor with real-time visualization*")
-
-# Create main layout with sidebar and main area
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    st.header("🎛️ Controls")
-    
-    # Geometry Tabs
-    st.subheader("📐 Geometry Definition")
-    geometry_tab = st.radio(
-        "Select geometry to edit:",
-        ["Outer Shape", "Inner Hole"],
-        index=0 if st.session_state.active_tab == "Outer Shape" else 1,
-        key="geometry_tab_selector"
-    )
-    st.session_state.active_tab = geometry_tab
-    
-    # Point input section
-    if geometry_tab == "Outer Shape":
-        current_points = st.session_state.outer_points
-        st.write(f"**Outer Shape Points** ({len(current_points)} points)")
-    else:
-        current_points = st.session_state.inner_points  
-        st.write(f"**Inner Hole Points** ({len(current_points)} points)")
-    
-    # Multi-point input controls
-    st.write("**Add Multiple Points:**")
-    st.write("*Paste coordinates as X,Y pairs (one per line or comma-separated)*")
-    
-    # Example formats
-    with st.expander("📋 Input Format Examples"):
-        st.code("""
-Format 1 (one pair per line):
-0, 0
-100, 0
-100, 100
-0, 100
-
-Format 2 (comma-separated):
-0,0, 100,0, 100,100, 0,100
-
-Format 3 (space-separated):
-0 0
-100 0
-100 100
-0 100
-        """)
-    
-    points_text = st.text_area(
-        "Enter coordinates:",
-        height=100,
-        placeholder="0, 0\n100, 0\n100, 100\n0, 100",
-        key=f"points_input_{geometry_tab}"
-    )
-    
-    col_add, col_replace = st.columns(2)
-    
-    with col_add:
-        if st.button("➕ Add Points", type="primary"):
-            if points_text.strip():
-                try:
-                    # Parse the input text
-                    new_points = parse_points_input(points_text)
-                    
-                    if new_points:
-                        if geometry_tab == "Outer Shape":
-                            st.session_state.outer_points.extend(new_points)
-                            st.success(f"Added {len(new_points)} points to Outer Shape")
-                        else:
-                            st.session_state.inner_points.extend(new_points)
-                            st.success(f"Added {len(new_points)} points to Inner Hole")
-                        st.rerun()
-                    else:
-                        st.error("No valid points found in input")
-                except Exception as e:
-                    st.error(f"Error parsing points: {str(e)}")
-            else:
-                st.warning("Please enter some coordinates")
-    
-    with col_replace:
-        if st.button("🔄 Replace All", type="secondary"):
-            if points_text.strip():
-                try:
-                    # Parse the input text
-                    new_points = parse_points_input(points_text)
-                    
-                    if new_points:
-                        if geometry_tab == "Outer Shape":
-                            st.session_state.outer_points = new_points
-                            st.success(f"Replaced with {len(new_points)} points for Outer Shape")
-                        else:
-                            st.session_state.inner_points = new_points
-                            st.success(f"Replaced with {len(new_points)} points for Inner Hole")
-                        st.rerun()
-                    else:
-                        st.error("No valid points found in input")
-                except Exception as e:
-                    st.error(f"Error parsing points: {str(e)}")
-            else:
-                st.warning("Please enter some coordinates")
-    
-    # Point list and editing
-    if current_points:
-        st.write("**Current Points:**")
+if 'show_stress' not in st.session_state:
+    st.session_state.show_stress = False
         
-        # Display points as editable table
-        points_df = pd.DataFrame(current_points, columns=['X (mm)', 'Y (mm)'])
-        points_df.index = points_df.index + 1  # Start from 1 instead of 0
+def visualize_stress_distribution(results, show_stress):
+    """Generates and displays the stress distribution plot."""
+    
+    # --- Plotting Setup ---
+    # Use a modern, clean style
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Get all defined points for framing the plot
+    all_points = st.session_state.outer_points + st.session_state.inner_points
+    
+    if show_stress:
+        # --- Full FEA Stress Visualization ---
+        if (results and results.get('solver_type') == 'full_fea' and 
+            results.get('stress_field') is not None and 
+            results.get('mesh_points') is not None and
+            results.get('mesh_triangles') is not None):
+            
+            try:
+                # Extract data from results
+                mesh_points = results['mesh_points']
+                stress_field = results['stress_field']
+                mesh_triangles = results['mesh_triangles']
+                
+                # Convert to display units (mm and MPa)
+                mesh_x = mesh_points[:, 0] * 1000
+                mesh_y = mesh_points[:, 1] * 1000
+                stress_mpa = stress_field / 1e6
+
+                # --- Create Triangulation (same as desktop) ---
+                import matplotlib.tri as tri
+                
+                # Filter out any invalid triangles that might reference non-existent nodes
+                max_node_idx = len(mesh_x) - 1
+                valid_triangles = mesh_triangles[~np.any(mesh_triangles > max_node_idx, axis=1)]
+                triang = tri.Triangulation(mesh_x, mesh_y, valid_triangles)
+                
+                # --- Masking Logic (same as desktop) ---
+                # Calculate triangle centers to determine which are inside the geometry
+                triangle_centers_x = triang.x[triang.triangles].mean(axis=1)
+                triangle_centers_y = triang.y[triang.triangles].mean(axis=1)
+
+                from matplotlib.path import Path
+                
+                # 1. Create mask for triangles OUTSIDE the outer boundary
+                outer_array = np.array(st.session_state.outer_points)
+                outer_path = Path(outer_array)
+                final_mask = ~outer_path.contains_points(np.column_stack([triangle_centers_x, triangle_centers_y]))
+
+                # 2. If there's a hole, add triangles INSIDE the hole to the mask
+                if len(st.session_state.inner_points) >= 3:
+                    inner_array = np.array(st.session_state.inner_points)
+                    inner_path = Path(inner_array)
+                    inside_hole_mask = inner_path.contains_points(np.column_stack([triangle_centers_x, triangle_centers_y]))
+                    final_mask |= inside_hole_mask
+                
+                # Apply the final mask to the triangulation
+                triang.set_mask(final_mask)
+                
+                # --- Plotting (same as desktop) ---
+                # Use tripcolor for direct plotting of FEA mesh results
+                contour = ax.tripcolor(triang, stress_mpa, shading='gouraud', cmap='jet')
+                
+                # Add contour lines for better definition
+                ax.tricontour(triang, stress_mpa, levels=10, colors='black', alpha=0.3, linewidths=0.5)
+                
+                # Add colorbar
+                cbar = fig.colorbar(contour, ax=ax, shrink=0.8, pad=0.02)
+                cbar.set_label('Shear Stress (MPa)', rotation=270, labelpad=20, fontsize=14)
+                
+                # Add max stress annotation
+                max_stress = stress_mpa.max()
+                ax.text(0.02, 0.98, f"Max Stress: {max_stress:.1f} MPa", 
+                       transform=ax.transAxes, fontsize=14, verticalalignment='top', 
+                       bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue"))
+
+            except Exception as e:
+                st.error(f"Visualization error: {e}")
+                log.error(f"Failed to create FEA stress visualization: {e}", exc_info=True)
+
+    # --- Plot Styling ---
+    ax.set_title("Shear Stress Distribution", fontsize=16, pad=20)
+    ax.set_xlabel("X (mm)", fontsize=14)
+    ax.set_ylabel("Y (mm)", fontsize=14)
+    ax.set_aspect('equal', adjustable='box')
+    
+    # Frame the plot using the geometry points
+    if all_points:
+        x_coords, y_coords = zip(*all_points)
+        ax.set_xlim(min(x_coords) - 50, max(x_coords) + 50)
+        ax.set_ylim(min(y_coords) - 50, max(y_coords) + 50)
+    
+    # Draw geometry outline if not showing stress
+    if not show_stress and st.session_state.outer_points:
+        outer_poly = plt.Polygon(st.session_state.outer_points, edgecolor='blue', fill=False, linewidth=1.5)
+        ax.add_patch(outer_poly)
+        if st.session_state.inner_points:
+            inner_poly = plt.Polygon(st.session_state.inner_points, edgecolor='blue', fill=False, linewidth=1.5)
+            ax.add_patch(inner_poly)
+
+    # Display the plot in Streamlit
+    st.pyplot(fig)
+
+def main():
+    # --- Sidebar ---
+    with st.sidebar:
+        st.header("Geometry Definition")
         
-        # Show the editable dataframe
-        edited_df = st.data_editor(
-            points_df, 
-            use_container_width=True,
-            num_rows="dynamic",  # Allow adding/removing rows
-            key=f"points_editor_{geometry_tab.lower().replace(' ', '_')}"
+        # Tab selection for outer vs inner geometry
+        st.session_state.active_tab = st.radio(
+            "Edit Geometry:",
+            ("Outer Shape", "Inner Hole"),
+            horizontal=True,
         )
         
-        # Update session state when points are edited
-        if not edited_df.equals(points_df):
-            # Convert back to list of tuples and update session state
-            new_points = [(float(row['X (mm)']), float(row['Y (mm)'])) for _, row in edited_df.iterrows()]
-            if geometry_tab == "Outer Shape":
-                st.session_state.outer_points = new_points
-            else:
-                st.session_state.inner_points = new_points
-            st.rerun()
-        
-        # Point management buttons
-        col_clear, col_remove = st.columns(2)
-        with col_clear:
-            if st.button("Clear All", type="secondary"):
-                if geometry_tab == "Outer Shape":
-                    st.session_state.outer_points = []
-                else:
-                    st.session_state.inner_points = []
-                st.rerun()
-        
-        with col_remove:
-            if len(current_points) > 0:
-                remove_idx = st.selectbox("Remove point:", 
-                                        range(1, len(current_points) + 1),
-                                        format_func=lambda x: f"Point {x}")
-                if st.button("Remove"):
-                    if geometry_tab == "Outer Shape":
-                        st.session_state.outer_points.pop(remove_idx - 1)
-                    else:
-                        st.session_state.inner_points.pop(remove_idx - 1)
-                    st.rerun()
-    
-    # Quick shapes
-    st.write("**Quick Shapes:**")
-    
-    shape_cols = st.columns(2)
-    
-    with shape_cols[0]:
-        if st.button("🟫 Rectangle\n(100×50mm)", use_container_width=True):
-            points = [[0, 0], [100, 0], [100, 50], [0, 50]]
-            if geometry_tab == "Outer Shape":
-                st.session_state.outer_points = points
-            else:
-                st.session_state.inner_points = points
-            st.rerun()
-        
-        if st.button("🔺 Triangle\n(Equilateral)", use_container_width=True):
-            import math
-            side = 100
-            height = side * math.sqrt(3) / 2
-            points = [[0, 0], [side, 0], [side/2, height]]
-            if geometry_tab == "Outer Shape":
-                st.session_state.outer_points = points
-            else:
-                st.session_state.inner_points = points
-            st.rerun()
-    
-    with shape_cols[1]:
-        if st.button("⭕ Circle\n(r=50mm)", use_container_width=True):
-            import math
-            radius = 50
-            n_points = 16
-            angles = [i * 2 * math.pi / n_points for i in range(n_points)]
-            points = [[radius * math.cos(a), radius * math.sin(a)] for a in angles]
-            if geometry_tab == "Outer Shape":
-                st.session_state.outer_points = points
-            else:
-                st.session_state.inner_points = points
-            st.rerun()
-        
-        if st.button("📐 L-Shape\n(100×100×20mm)", use_container_width=True):
-            # Standard L-section
-            points = [[0, 0], [100, 0], [100, 20], [20, 20], [20, 100], [0, 100]]
-            if geometry_tab == "Outer Shape":
-                st.session_state.outer_points = points
-            else:
-                st.session_state.inner_points = points
-            st.rerun()
-    
-    # Analysis Controls
-    st.markdown("---")
-    st.subheader("🔬 Analysis Controls")
-    
-    mesh_size = st.number_input("Mesh Size (mm):", value=10.0, min_value=0.1, max_value=50.0, format="%.1f")
-    
-    # Material Properties
-    st.write("**Material Properties:**")
-    shear_modulus = st.number_input("Shear Modulus G (MPa):", value=80000.0, format="%.1f")
-    
-    # Loading
-    st.write("**Loading:**")
-    applied_torque = st.number_input("Applied Torque T (N⋅m):", value=1000.0, format="%.1f")
-    beam_length = st.number_input("Beam Length L (m):", value=2.0, format="%.2f")
-    
-    # Analysis button
-    if st.button("🚀 Generate Mesh & Solve", type="primary"):
-        if len(st.session_state.outer_points) < 3:
-            st.error("❌ Please define at least 3 points for the Outer Shape.")
-        elif len(st.session_state.inner_points) > 0 and len(st.session_state.inner_points) < 3:
-            st.error("❌ If you define an Inner Hole, it must have at least 3 points.")
-        else:
-            with st.spinner("Running analysis..."):
-                # Convert to meters and run full FEA analysis
-                outer_points_m = [[p[0]/1000, p[1]/1000] for p in st.session_state.outer_points]
-                inner_points_m = [[p[0]/1000, p[1]/1000] for p in st.session_state.inner_points]
-                
-                # Run full FEA analysis (DOLFINx required)
-                results = run_full_fea(
-                    outer_points_m, 
-                    inner_points_m,
-                    shear_modulus * 1e6,  # Convert MPa to Pa
-                    applied_torque,
-                    beam_length,
-                    mesh_size / 1000  # Convert mm to m
-                )
-                
-                if results is not None:
-                    st.session_state.results = results
-                    
-                    if results['success']:
-                        st.success("✅ Professional FEA analysis completed with DOLFINx!")
-                    else:
-                        st.error("❌ FEA analysis failed")
-                else:
-                    st.error("❌ Critical error: Cannot run analysis without DOLFINx")
-                st.rerun()
-    
-    # Results Display
-    if st.session_state.results:
-        st.markdown("---")
-        st.subheader("📊 Results")
-        
-        results = st.session_state.results
-        
-        # Convert units for display
-        J_mm4 = results['polar_moment'] * (1000**4)  # m^4 to mm^4
-        k = results['stiffness']
-        theta_deg = np.rad2deg(results['twist_angle'])
-        tau_max_mpa = results['max_shear_stress'] / 1e6  # Pa to MPa
-        
-        st.metric("Torsional Constant J", f"{J_mm4:.2e} mm⁴")
-        st.metric("Torsional Stiffness k", f"{k:.2e} N⋅m/rad")
-        st.metric("Angle of Twist θ", f"{theta_deg:.4f}°")
-        st.metric("Max Shear Stress τ_max", f"{tau_max_mpa:.2f} MPa")
-        
-        # Download results
-        if st.button("💾 Download Results"):
-            results_data = {
-                'geometry': {
-                    'outer_points': st.session_state.outer_points,
-                    'inner_points': st.session_state.inner_points
-                },
-                'material': {
-                    'shear_modulus_mpa': shear_modulus,
-                    'applied_torque_nm': applied_torque,
-                    'beam_length_m': beam_length
-                },
-                'results': {
-                    'torsional_constant_mm4': float(J_mm4),
-                    'torsional_stiffness_nm_per_rad': float(k),
-                    'twist_angle_degrees': float(theta_deg),
-                    'max_shear_stress_mpa': float(tau_max_mpa)
-                }
-            }
+        # Point entry form
+        with st.form(key='add_point_form'):
+            st.write(f"Add points for **{st.session_state.active_tab}**")
             
-            json_str = json.dumps(results_data, indent=2)
-            st.download_button(
-                label="Download as JSON",
-                data=json_str,
-                file_name="fea_results.json",
-                mime="application/json"
+            # Input for new points
+            point_input = st.text_area(
+                "Enter Points (x,y per line or single x,y):",
+                height=100,
+                placeholder="Examples:\\n10, 20\\n30 40\\n(50, 60)",
+                key="point_input_area" # Add a key to persist the input
             )
-
-with col2:
-    # Switch between geometry and results view
-    if st.session_state.results:
-        view_tab = st.radio("View:", ["Geometry", "Stress Results"], horizontal=True)
-    else:
-        view_tab = "Geometry"
-        
-    if view_tab == "Geometry":
-        st.header("📈 Cross-Section Geometry")
-    else:
-        st.header("🌡️ Stress Distribution")
-    
-    # Create the plot
-    fig, ax = plt.subplots(figsize=(10, 8))
-    
-    # Check if we should show stress results
-    show_stress = (view_tab == "Stress Results" and 
-                   st.session_state.results and 
-                   st.session_state.results['success'])
-    
-    # Plot outer shape
-    if len(st.session_state.outer_points) >= 3:
-        outer_array = np.array(st.session_state.outer_points)
-        
-        if show_stress:
-            # Plot with stress visualization
-            results = st.session_state.results
             
-            # Full FEA visualization only - no simplified fallback
-            if (results['solver_type'] == 'full_fea' and 
-                results['stress_field'] is not None and 
-                results['mesh_points'] is not None):
-                
-                # Full FEA contour plot using proper triangulation (same as desktop)
+            # Buttons for adding points
+            add_points_button = st.form_submit_button(label="Add Points")
+            replace_all_button = st.form_submit_button(label="Replace All")
+
+            if add_points_button or replace_all_button:
                 try:
-                    mesh_points = results['mesh_points']
-                    stress_field = results['stress_field']
+                    new_points = []
+                    # Use the correct key to get the value from session state
+                    input_text = st.session_state.point_input_area
+                    lines = input_text.strip().splitlines() # Use splitlines() for better handling of newlines
+                    for line in lines:
+                        line = line.strip().replace('(', '').replace(')', '')
+                        if not line: continue # Skip empty lines
+                        
+                        if ',' in line:
+                            parts = line.split(',')
+                        else:
+                            parts = line.split()
+                        
+                        if len(parts) == 2:
+                            x, y = float(parts[0].strip()), float(parts[1].strip())
+                            new_points.append([x, y])
                     
-                    # Convert mesh points to mm for display
-                    mesh_x = mesh_points[:, 0] * 1000
-                    mesh_y = mesh_points[:, 1] * 1000
-                    stress_mpa = stress_field / 1e6  # Convert to MPa
-                    
-                    # Create matplotlib triangulation (same method as desktop)
-                    import matplotlib.tri as tri
-                    triang = tri.Triangulation(mesh_x, mesh_y)
-                    
-                    # Create stress visualization using tripcolor (same as desktop)
-                    contour = ax.tripcolor(triang, stress_mpa, shading='gouraud', cmap='jet', alpha=0.9)
-                    
-                    # Add contour lines for better definition
-                    try:
-                        levels = np.linspace(stress_mpa.min(), stress_mpa.max(), 10)
-                        ax.tricontour(triang, stress_mpa, levels=levels, colors='black', alpha=0.3, linewidths=0.5)
-                    except:
-                        pass  # Skip contour lines if triangulation issues
-                    
-                    # Add colorbar
-                    cbar = plt.colorbar(contour, ax=ax, shrink=0.8, pad=0.02)
-                    cbar.set_label('Shear Stress (MPa)', rotation=270, labelpad=20, fontsize=12, fontweight='bold')
-                    
-                    # Plot polygon outlines
-                    outer_polygon = Polygon(outer_array, fill=False, edgecolor='white', 
-                                          linewidth=3, label='Outer Shape')
-                    ax.add_patch(outer_polygon)
-                    
-                    # Plot inner hole if present
-                    if len(st.session_state.inner_points) >= 3:
-                        inner_array = np.array(st.session_state.inner_points)
-                        inner_polygon = Polygon(inner_array, fill=False, edgecolor='white', 
-                                              linewidth=2, label='Inner Hole')
-                        ax.add_patch(inner_polygon)
-                    
-                    st.success("🎯 Professional FEA stress field visualization (DOLFINx)")
-                    
-                except Exception as e:
-                    st.error(f"Visualization error: {e}")
-                    st.error("Failed to create FEA stress visualization")
-                    
-            else:
-                st.error("🚨 **VISUALIZATION ERROR**: No valid FEA results available")
-                st.error("This should not happen if DOLFINx is properly installed")
-                
-            # Plot stress at boundary points with values (full FEA only)
-            if results['outer_stress_values']:
-                stress_mpa = [s / 1e6 for s in results['outer_stress_values']]
-                scatter = ax.scatter(outer_array[:, 0], outer_array[:, 1], 
-                                   c=stress_mpa, s=150, cmap='jet', 
-                                   edgecolor='white', linewidth=2, zorder=5)
-                
-                # Add stress value annotations with actual FEA values
-                for i, (x, y) in enumerate(outer_array):
-                    if i < len(stress_mpa):
-                        ax.annotate(f'{i+1}\n{stress_mpa[i]:.1f}', (x, y), 
-                                  xytext=(8, 8), textcoords='offset points',
-                                  fontsize=9, fontweight='bold', color='white',
-                                  bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.7))
-        else:
-            # Regular geometry view
-            outer_polygon = Polygon(outer_array, alpha=0.3, facecolor='lightblue', 
-                                   edgecolor='blue', linewidth=2, label='Outer Shape')
-            ax.add_patch(outer_polygon)
-            
-            # Plot outer points
-            ax.scatter(outer_array[:, 0], outer_array[:, 1], c='blue', s=100, zorder=5)
-    
-    # Plot inner hole (full FEA only)
-    if len(st.session_state.inner_points) >= 3:
-        inner_array = np.array(st.session_state.inner_points)
-        
-        if show_stress:
-            # Create inner hole outline and stress visualization
-            results = st.session_state.results
-            
-            # Create inner hole as white cutout
-            inner_polygon = Polygon(inner_array, fill=True, facecolor='white', 
-                                   edgecolor='white', linewidth=3, zorder=10)
-            ax.add_patch(inner_polygon)
-            
-            # Add boundary outline
-            inner_outline = Polygon(inner_array, fill=False, edgecolor='white', 
-                                   linewidth=2, zorder=11)
-            ax.add_patch(inner_outline)
-            
-            # Plot stress points for inner boundary if available
-            if results['inner_stress_values']:
-                stress_mpa = [s / 1e6 for s in results['inner_stress_values']]
-                scatter_inner = ax.scatter(inner_array[:, 0], inner_array[:, 1], 
-                                         c=stress_mpa, s=150, cmap='jet', 
-                                         edgecolor='white', linewidth=2, zorder=15)
-                
-                # Add stress value annotations for inner points with actual FEA values
-                for i, (x, y) in enumerate(inner_array):
-                    if i < len(stress_mpa):
-                        ax.annotate(f'{i+1}\n{stress_mpa[i]:.1f}', (x, y), 
-                                  xytext=(8, 8), textcoords='offset points',
-                                  fontsize=9, fontweight='bold', color='black',
-                                  bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-        else:
-            # Regular geometry view
-            inner_polygon = Polygon(inner_array, alpha=0.8, facecolor='white', 
-                                   edgecolor='red', linewidth=2, label='Inner Hole')
-            ax.add_patch(inner_polygon)
-            
-            # Plot inner points
-            ax.scatter(inner_array[:, 0], inner_array[:, 1], c='red', s=100, zorder=5)
-    
-    # Plot individual points for active geometry (only in geometry view)
-    if not show_stress:
-        current_points = st.session_state.outer_points if st.session_state.active_tab == "Outer Shape" else st.session_state.inner_points
-        color = 'blue' if st.session_state.active_tab == "Outer Shape" else 'red'
-        
-        if current_points and len(current_points) < 3:
-            points_array = np.array(current_points)
-            ax.scatter(points_array[:, 0], points_array[:, 1], c=color, s=100, zorder=5)
-            for i, (x, y) in enumerate(points_array):
-                ax.annotate(f'{i+1}', (x, y), xytext=(5, 5), textcoords='offset points',
-                           fontsize=10, fontweight='bold', color=color)
-    
-    # Formatting
-    ax.set_xlabel('X (mm)', fontsize=12)
-    ax.set_ylabel('Y (mm)', fontsize=12)
-    
-    if show_stress:
-        ax.set_title('Shear Stress Distribution\n(Values shown at each point)', fontsize=14)
-    else:
-        ax.set_title(f'Cross-Section Geometry\n{st.session_state.active_tab} (Enter coordinates in left panel)', fontsize=14)
-    
-    ax.grid(True, alpha=0.3)
-    ax.set_aspect('equal')
-    
-    # Set reasonable limits
-    all_points = st.session_state.outer_points + st.session_state.inner_points
-    if all_points:
-        all_array = np.array(all_points)
-        x_margin = max(10, (np.max(all_array[:, 0]) - np.min(all_array[:, 0])) * 0.1)
-        y_margin = max(10, (np.max(all_array[:, 1]) - np.min(all_array[:, 1])) * 0.1)
-        ax.set_xlim(np.min(all_array[:, 0]) - x_margin, np.max(all_array[:, 0]) + x_margin)
-        ax.set_ylim(np.min(all_array[:, 1]) - y_margin, np.max(all_array[:, 1]) + y_margin)
-    else:
-        ax.set_xlim(-50, 150)
-        ax.set_ylim(-50, 150)
-    
-    # Add legend if both shapes exist
-    if len(st.session_state.outer_points) >= 3 or len(st.session_state.inner_points) >= 3:
-        ax.legend()
-    
-    # Instructions
-    if show_stress:
-        results = st.session_state.results
-        max_stress_mpa = results['max_shear_stress'] / 1e6
-        
-        instructions = f"""
-        **Professional FEA Analysis Results (DOLFINx):**
-        - Max shear stress: **{max_stress_mpa:.2f} MPa**
-        - Full finite element analysis with mesh generation
-        - Stress field computed from DOLFINx solver
-        - Contour plot shows actual stress distribution throughout the domain
-        - Numbers show point ID and stress value at boundary points (MPa)
-        - Identical results to desktop version
-        """
-    else:
-        instructions = f"""
-        **Instructions:**
-        - Currently editing: **{st.session_state.active_tab}**
-        - Enter coordinates in the left panel using the text area
-        - Minimum 3 points required for each shape
-        - Points will be connected in order to form the shape
-        - Use Quick Shapes or paste coordinate data
-        - Analysis uses full DOLFINx FEA (same as desktop version)
-        """
-    
-    st.pyplot(fig)
-    st.info(instructions)
+                    if new_points:
+                        target_list = st.session_state.outer_points if st.session_state.active_tab == "Outer Shape" else st.session_state.inner_points
+                        
+                        if replace_all_button:
+                            target_list.clear()
+                            target_list.extend(new_points)
+                        else:
+                            target_list.extend(new_points)
+                        
+                        st.session_state.show_stress = False # Reset on geometry change
+                        st.session_state.point_input_area = "" # Clear the input area
+                        st.rerun()
 
-# Footer
-st.markdown("---")
-st.markdown(f"""
-<div style='text-align: center; color: #666; padding: 20px;'>
-    <p><strong>2D FEA Torsion Analysis</strong> - Professional Web Version</p>
-    <p>Full DOLFINx finite element analysis with GMSH meshing - Same as desktop version</p>
-    <p>Developed by <strong>Yacht Engineering Services</strong> | Built with Streamlit</p>
-    <p>
-        <a href='https://github.com/YachtEngineeringservices/2d-FEA' target='_blank'>GitHub Repository</a> | 
-        <a href='https://github.com/YachtEngineeringservices/2d-FEA/releases' target='_blank'>Desktop Version</a>
-    </p>
-</div>
-""", unsafe_allow_html=True)
+                except ValueError:
+                    st.error("Invalid input format. Please use x,y or x y.")
+
+        # Display and manage current points
+        current_points = st.session_state.outer_points if st.session_state.active_tab == "Outer Shape" else st.session_state.inner_points
+        
+        if current_points:
+            df = pd.DataFrame(current_points, columns=['X (mm)', 'Y (mm)'])
+            st.dataframe(df, height=200)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Undo Last", use_container_width=True):
+                    if current_points:
+                        current_points.pop()
+                        st.rerun()
+            with col2:
+                if st.button("Clear All", use_container_width=True):
+                    if current_points:
+                        current_points.clear()
+                        st.rerun()
+        
+        # Quick shapes
+        st.write("---")
+        st.write("**Quick Shapes**")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Rectangle (100x50)", use_container_width=True):
+                st.session_state.outer_points = [[-50,-25], [50,-25], [50,25], [-50,25]]
+                st.session_state.inner_points = []
+                st.rerun()
+            if st.button("Triangle (Isosceles)", use_container_width=True):
+                st.session_state.outer_points = [[-50,0], [50,0], [0,86.6]]
+                st.session_state.inner_points = []
+                st.rerun()
+        with col2:
+            if st.button("Circle (r=50)", use_container_width=True):
+                st.session_state.outer_points = [[50*np.cos(a), 50*np.sin(a)] for a in np.linspace(0, 2*np.pi, 30)]
+                st.session_state.inner_points = []
+                st.rerun()
+            if st.button("L-Shape (100x100)", use_container_width=True):
+                st.session_state.outer_points = [[0,0], [100,0], [100,20], [20,20], [20,100], [0,100]]
+                st.session_state.inner_points = []
+                st.rerun()
+
+        # --- Analysis Controls ---
+        st.header("Analysis Controls")
+    
+        # Inputs for material properties and loading
+        shear_modulus = st.number_input("Shear Modulus (G) [MPa]:", value=80e3, format="%g")
+        applied_torque = st.number_input("Applied Torque (T) [N-m]:", value=1000.0, format="%f")
+        beam_length = st.number_input("Beam Length (L) [m]:", value=2.0, format="%f")
+            
+        # Mesh size input for FEA (now always shown)
+        mesh_size = st.number_input("Mesh Size (mm):", value=5.0, min_value=0.1, max_value=50.0, format="%.1f")
+        
+        # Generate & Solve button
+        if st.button("Generate Mesh & Solve", type="primary", use_container_width=True):
+            if len(st.session_state.outer_points) < 3:
+                st.error("Please define at least 3 points for the outer shape.")
+            else:
+                with st.spinner("Running analysis..."):
+                    # Convert to meters and run full FEA analysis
+                    outer_points_m = [[p[0]/1000, p[1]/1000] for p in st.session_state.outer_points]
+                    inner_points_m = [[p[0]/1000, p[1]/1000] for p in st.session_state.inner_points]
+                    
+                    # Run full FEA analysis (DOLFINx required)
+                    results = run_full_fea(
+                        outer_points_m, 
+                        inner_points_m,
+                        shear_modulus * 1e6,  # Convert MPa to Pa
+                        applied_torque,
+                        beam_length,
+                        mesh_size / 1000  # Convert mm to m
+                    )
+                    
+                    if results:
+                        st.session_state.results = results
+                        st.session_state.show_stress = True
+                    else:
+                        st.error("Analysis failed. Check logs for details.")
+                        st.session_state.results = None
+                        st.session_state.show_stress = False
+                    
+                    st.rerun()
+
+    # --- Main Content ---
+    st.title("2D FEA Torsional Analysis")
+    
+    # --- Results Display ---
+    if st.session_state.results:
+        st.header("Results")
+        results = st.session_state.results
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Torsional Constant (J)", f"{results['polar_moment']:.4e} mm⁴")
+        col2.metric("Torsional Stiffness (k)", f"{results['stiffness']:.4e} Nm/rad")
+        col3.metric("Angle of Twist (θ)", f"{results['twist_angle']:.4f} rad")
+        col4.metric("Max Shear Stress (τ_max)", f"{results['max_shear_stress'] / 1e6:.2f} MPa")
+        
+        # --- Visualization ---
+        st.header("Stress Distribution")
+        
+        # View toggle
+        view_mode = st.radio("View:", ("Geometry", "Stress Results"), horizontal=True)
+        
+        if view_mode == "Stress Results":
+            st.session_state.show_stress = True
+        else:
+            st.session_state.show_stress = False
+            
+        visualize_stress_distribution(st.session_state.results, st.session_state.show_stress)
+    else:
+        # Show a placeholder or instructions if no results yet
+        st.info("Define a geometry and run the analysis to see the results.")
+        visualize_stress_distribution(None, False)
+
+if __name__ == "__main__":
+    # --- Initialize Session State ---
+    if 'outer_points' not in st.session_state:
+        st.session_state.outer_points = []
+    if 'inner_points' not in st.session_state:
+        st.session_state.inner_points = []
+    if 'active_tab' not in st.session_state:
+        st.session_state.active_tab = "Outer Shape"
+    if 'results' not in st.session_state:
+        st.session_state.results = None
+    if 'show_stress' not in st.session_state:
+        st.session_state.show_stress = False
+        
+    main()

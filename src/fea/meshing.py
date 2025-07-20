@@ -32,14 +32,19 @@ import sys
 def create_polygon(points, mesh_size):
     """Helper function to create a gmsh polygon from a list of points."""
     gmsh_points = []
+    # Use a smaller mesh size at boundary points to ensure coverage
+    boundary_mesh_size = mesh_size * 0.5  # Use finer mesh at boundaries
     for p in points:
-        gmsh_points.append(gmsh.model.geo.addPoint(p[0], p[1], 0, meshSize=mesh_size))
+        gmsh_points.append(gmsh.model.geo.addPoint(p[0], p[1], 0, meshSize=boundary_mesh_size))
     
     lines = []
     for i in range(len(gmsh_points)):
         p1 = gmsh_points[i]
         p2 = gmsh_points[(i + 1) % len(gmsh_points)]
-        lines.append(gmsh.model.geo.addLine(p1, p2))
+        line = gmsh.model.geo.addLine(p1, p2)
+        # Set mesh size on boundary lines to ensure good coverage
+        gmsh.model.geo.mesh.setSize([(0, p1), (0, p2)], boundary_mesh_size)
+        lines.append(line)
         
     loop = gmsh.model.geo.addCurveLoop(lines)
     return loop
@@ -79,8 +84,27 @@ def main():
         boundary_lines = [ent[1] for ent in boundary_entities]
         gmsh.model.addPhysicalGroup(1, boundary_lines, 2)
         
-        # Generate the 2D mesh
+        # Set mesh options to ensure better boundary coverage
+        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)
+        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 1)
+        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+        gmsh.option.setNumber("Mesh.Algorithm", 2)  # Automatic (more robust)
+        gmsh.option.setNumber("Mesh.RecombineAll", 0)  # Keep triangles
+        gmsh.option.setNumber("Mesh.Smoothing", 3)  # More smoothing iterations
+        
+        # Force uniform mesh size throughout the domain
+        gmsh.model.mesh.setSize(gmsh.model.getEntities(0), mesh_size * 0.8)
+        
+        # Generate the 2D mesh with more refinement
         gmsh.model.mesh.generate(2)
+        
+        # Adaptive refinement: refine mesh multiple times for better quality
+        for i in range(2):  # Two levels of refinement
+            gmsh.model.mesh.refine()
+            print(f"Applied mesh refinement level {{i+1}}")
+            
+        # Optimize mesh quality
+        gmsh.model.mesh.optimize("Netgen")
         
         # Create output directory
         os.makedirs(output_dir, exist_ok=True)
@@ -183,16 +207,23 @@ def create_polygon(points, mesh_size):
         # Continue anyway, but let user know
     
     gmsh_points = []
-    for p in points:
-        gmsh_points.append(gmsh.model.geo.addPoint(p[0], p[1], 0, meshSize=mesh_size))
+    # Use consistent mesh size at boundary points
+    boundary_mesh_size = mesh_size * 0.7  # Slightly finer mesh at boundaries
+    for i, p in enumerate(points):
+        point_id = gmsh.model.geo.addPoint(p[0], p[1], 0, meshSize=boundary_mesh_size)
+        gmsh_points.append(point_id)
+        log.info(f"Added point {i}: ({p[0]:.4f}, {p[1]:.4f}) with ID {point_id}")
     
     lines = []
     for i in range(len(gmsh_points)):
         p1 = gmsh_points[i]
         p2 = gmsh_points[(i + 1) % len(gmsh_points)]
-        lines.append(gmsh.model.geo.addLine(p1, p2))
+        line = gmsh.model.geo.addLine(p1, p2)
+        lines.append(line)
+        log.info(f"Added line {i}: Point {p1} to Point {p2} with ID {line}")
         
     loop = gmsh.model.geo.addCurveLoop(lines)
+    log.info(f"Created curve loop with ID {loop}")
     return loop
 
 def create_mesh(outer_points, inner_points, mesh_size):

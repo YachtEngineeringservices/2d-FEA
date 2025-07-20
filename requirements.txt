@@ -16,6 +16,9 @@ pyvista>=0.42.0
 streamlit>=1.28.0
 plotly>=5.15.0
 pandas>=2.0.0
+streamlit-option-menu
+# mpl_interactions for zoom and pan
+mpl_interactions
 
 # FEA Backend (install via conda-forge for best results)
 # conda install -c conda-forge fenics-dolfinx gmsh h5py meshio

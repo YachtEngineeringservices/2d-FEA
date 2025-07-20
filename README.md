@@ -1,23 +1,22 @@
-# 2D FEA Analysis Tool
+# 2D FEA Torsional Analysis Web Application
 
-A cross-platform 2D Finite Element Analysis application for structural and torsional analysis.
+A web-based finite element analysis tool for torsional stress analysis of custom cross-sections, built with DOLFINx and Streamlit.
 
 ## Features
 
-- **2D FEA Simple**: Basic structural analysis with interactive GUI
-- **2D FEA Torsion Analysis**: Specialized torsional analysis tool with advanced point editing
-- **Full DOLFINx FEA Web App**: Professional finite element analysis in your browser with the same solver as desktop
-- **Interactive Point Editing**: Edit coordinates, reorder points, and delete points with intuitive controls
-- **Interactive Plot Navigation**: Zoom with mouse wheel, pan with right-click drag, click-to-select points
-- **Professional Stress Visualization**: True stress field contour plots from DOLFINx mesh
-- **Cross-platform**: Works on Windows, Linux, and web browsers
-- **Automated Windows Builds**: GitHub Actions automatically creates Windows executables
+- **Interactive Geometry Input**: Define custom cross-sections with outer and inner boundaries
+- **Advanced FEA Solver**: Uses DOLFINx v0.8.0 for accurate torsional stress calculations
+- **Real-time Visualization**: High-quality stress distribution plots with full geometry coverage
+- **Adaptive Mesh Refinement**: Automatic mesh optimization for better accuracy
+- **Interactive Controls**: Zoom and pan with slider controls for detailed analysis
+- **Professional Results**: Complete torsional properties including stiffness, twist angle, and maximum stress
 
-## Usage Options
+## Recent Improvements
 
-### 1. Windows Executables (Automated via GitHub Actions)
-- Download from GitHub Releases
-- No installation required - run directly
+✅ **Fixed Left-side Visualization Issue**: Resolved triangulation problem causing missing stress results on geometry left side  
+✅ **Enhanced Clear Geometry**: Button now clears all data including mesh, results, and zoom controls  
+✅ **Improved Mesh Generation**: Separated mesh and solve workflows with adaptive refinement  
+✅ **Better User Interface**: Slider-based zoom/pan controls and real-time analysis logging
 
 ### 2. WSL2/Linux Desktop
 ```bash

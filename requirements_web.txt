@@ -1,24 +1,22 @@
 # Web App Requirements with Full FEA Support
 # Core web app dependencies
-streamlit>=1.28.0
-numpy>=1.24.0
-matplotlib>=3.7.0
-pandas>=2.0.0
-scipy>=1.11.0
+streamlit>=1.32.0
+numpy>=1.26.0
+matplotlib>=3.8.0
+pandas>=2.2.0
+scipy>=1.12.0
 
-# FEA dependencies (same as desktop version)
-fenics-dolfinx>=0.7.0
-pyvista>=0.42.0
-h5py>=3.9.0
-gmsh>=4.11.0
+# FEA dependencies 
+# Note: DOLFINx and related packages are provided by the dolfinx/dolfinx base image
 
-# Additional mesh I/O
+# Additional mesh I/O and plotting
 meshio>=5.3.0
-xarray>=2023.7.0
+h5py>=3.10.0
+xarray>=2024.2.0
+plotly>=5.19.0
 
-# System dependencies for DOLFINx (may need conda-forge)
-# These are typically installed via conda in the fenics-core environment
-# petsc>=3.19.0
-# slepc>=3.19.0
-# hdf5>=1.14.0
-# pybind11>=2.10.0
+# These are installed in the base DOLFINx image:
+# - dolfinx (FEA solver)
+# - gmsh (mesh generation) 
+# - petsc, slepc (linear algebra)
+# - mpi4py (parallel computing)
