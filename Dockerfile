@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/cache/apt/*
 
-# Install Python packages with minimal dependencies
-RUN pip3 install --no-cache-dir --no-deps \
+# Install Python packages with dependencies but optimize for size
+RUN pip3 install --no-cache-dir \
     streamlit==1.32.0 \
     matplotlib==3.8.3 \
     pandas==2.2.1 \
