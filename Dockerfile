@@ -22,8 +22,15 @@ RUN pip3 install --no-cache-dir \
 # Create app directory
 WORKDIR /app
 
-# Copy application code (use .dockerignore to exclude unnecessary files)
+# Copy application code
 COPY src/ /app/src/
+
+# Create startup script
+RUN echo '#!/bin/bash\n\
+PORT=${PORT:-8501}\n\
+echo "Starting Streamlit on port $PORT"\n\
+streamlit run src/web_app_clean.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true\n\
+' > /app/start.sh && chmod +x /app/start.sh
 
 # Set environment variables
 ENV PYTHONPATH=/app/src:$PYTHONPATH \
@@ -39,7 +46,7 @@ EXPOSE 8501
 
 # Minimal health check
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=2 \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+    CMD curl -f http://localhost:${PORT:-8501}/_stcore/health || exit 1
 
 # Command to run the app
-CMD streamlit run src/web_app_clean.py --server.port=${PORT:-8501} --server.address=0.0.0.0 --server.headless=true
+CMD ["/app/start.sh"]
