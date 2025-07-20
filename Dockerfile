@@ -28,6 +28,10 @@ COPY src/ /app/src/
 # Create startup script
 RUN echo '#!/bin/bash\n\
 set -e\n\
+# Unset conflicting Streamlit environment variables\n\
+unset STREAMLIT_SERVER_PORT\n\
+unset STREAMLIT_SERVER_ADDRESS\n\
+unset STREAMLIT_SERVER_HEADLESS\n\
 PORT=${PORT:-8501}\n\
 echo "Starting Streamlit on port $PORT"\n\
 echo "Available environment variables:"\n\
