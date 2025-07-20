@@ -1,4 +1,4 @@
-# Dockerfile for DOLFINx + Streamlit deployment on Render.com
+# Dockerfile for DOLFINx + Streamlit deployment on Railway
 FROM dolfinx/dolfinx:v0.8.0
 
 # Install system dependencies and Python packages
@@ -6,9 +6,15 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     curl \
     gmsh \
+    libgmsh-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Streamlit and other Python packages
+# Set environment variables for GMSH
+ENV GMSH_HOME=/usr
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+ENV PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH
+
+# Install Streamlit and other Python packages (without gmsh first)
 RUN pip3 install --no-cache-dir \
     streamlit==1.32.0 \
     matplotlib==3.8.3 \
@@ -18,8 +24,10 @@ RUN pip3 install --no-cache-dir \
     plotly==5.19.0 \
     meshio==5.3.4 \
     h5py==3.10.0 \
-    xarray==2024.2.0 \
-    gmsh
+    xarray==2024.2.0
+
+# Install GMSH Python package separately with specific version
+RUN pip3 install --no-cache-dir gmsh>=4.11.0 --force-reinstall
 
 # Create app directory
 WORKDIR /app
@@ -37,10 +45,10 @@ ENV STREAMLIT_SERVER_HEADLESS=true
 # Create output directory with proper permissions
 RUN mkdir -p /app/output && chmod 755 /app/output
 
-# Expose Streamlit port (Render.com uses PORT env var)
+# Expose Streamlit port (Railway uses PORT env var)
 EXPOSE 8501
 
-# Health check for Render.com
+# Health check for Railway
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
 

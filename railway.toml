@@ -1,0 +1,17 @@
+# Railway Configuration
+# This file is automatically detected by Railway
+
+# Build settings
+[build]
+builder = "dockerfile"
+
+# Runtime settings  
+[deploy]
+startCommand = "streamlit run src/web_app_clean.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true"
+healthcheckPath = "/_stcore/health"
+
+# Environment variables
+[env]
+PYTHONPATH = "/app/src"
+STREAMLIT_SERVER_HEADLESS = "true"
+STREAMLIT_SERVER_ADDRESS = "0.0.0.0"

@@ -7,6 +7,16 @@ import logging
 import os
 from fea import meshing, solver
 
+# Check GMSH availability early
+try:
+    gmsh_available = meshing.check_gmsh_availability()
+    if not gmsh_available:
+        st.error("⚠️ GMSH is not available. Mesh generation will not work.")
+        st.info("This is likely due to platform limitations. Please try a different deployment method.")
+except Exception as e:
+    st.error(f"Error checking GMSH availability: {e}")
+    gmsh_available = False
+
 # --- Page Config ---
 st.set_page_config(
     page_title="2D FEA Torsion Analysis",

@@ -1,13 +1,3 @@
-import gmsh
-import meshio
-import logging
-import os
-import signal
-import threading
-
-log = logging.getLogger(__name__)
-
-import gmsh
 import meshio
 import logging
 import os
@@ -19,15 +9,38 @@ import sys
 
 log = logging.getLogger(__name__)
 
+# Try to import GMSH with error handling
+GMSH_AVAILABLE = False
+try:
+    import gmsh
+    GMSH_AVAILABLE = True
+    log.info("GMSH successfully imported")
+except ImportError as e:
+    log.error(f"Failed to import GMSH: {e}")
+    log.error("GMSH mesh generation will not be available")
+except Exception as e:
+    log.error(f"Unexpected error importing GMSH: {e}")
+
+def check_gmsh_availability():
+    """Check if GMSH is available for mesh generation."""
+    return GMSH_AVAILABLE
+
 def create_mesh_subprocess(outer_points, inner_points, mesh_size, output_dir):
     """Run GMSH mesh generation in a separate process to avoid signal conflicts."""
     
+    if not GMSH_AVAILABLE:
+        raise ImportError("GMSH is not available for mesh generation")
+    
     # Create a temporary Python script to run GMSH
     script_content = f'''
-import gmsh
-import meshio
-import os
-import sys
+try:
+    import gmsh
+    import meshio
+    import os
+    import sys
+except ImportError as e:
+    print(f"Import error in subprocess: {{e}}")
+    sys.exit(1)
 
 def create_polygon(points, mesh_size):
     """Helper function to create a gmsh polygon from a list of points."""

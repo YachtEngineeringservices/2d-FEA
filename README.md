@@ -58,22 +58,22 @@ pip install -r requirements_web.txt
 streamlit run src/web_app.py
 ```
 
-#### Cloud Deployment (Render.com)
+#### Cloud Deployment (Railway)
 ```bash
-# Deploy to Render.com with full DOLFINx support
-./deploy_render.sh
+# Deploy to Railway with full DOLFINx support
+./deploy_railway.sh
 ```
 
-**Available at**: [https://2d-fea-dolfinx.onrender.com](https://2d-fea-dolfinx.onrender.com)
+**Available at**: [Your Railway deployment URL]
 
 **Web App Features:**
 - **Full DOLFINx FEA**: Same professional solver as desktop version
-- **GMSH Mesh Generation**: Quality finite element meshes
+- **GMSH Mesh Generation**: Quality finite element meshes (works reliably on Railway)
 - **Professional Visualization**: True stress field contour plots
 - **Always-on Service**: No cold starts, professional deployment
 - **Browser-based**: Access from any web browser worldwide
 - **Multi-point Geometry Input**: Paste coordinates directly
-- **Cost**: $7/month on Render.com (Starter plan)
+- **Cost**: Starting at $5/month on Railway (Hobby plan with 30-day free trial)
 
 ## Development
 
