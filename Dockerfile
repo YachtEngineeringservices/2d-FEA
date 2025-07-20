@@ -5,16 +5,9 @@ FROM dolfinx/dolfinx:v0.8.0
 RUN apt-get update && apt-get install -y \
     python3-pip \
     curl \
-    gmsh \
-    libgmsh-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Set environment variables for GMSH
-ENV GMSH_HOME=/usr
-ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
-ENV PYTHONPATH=/usr/lib/python3/dist-packages:$PYTHONPATH
-
-# Install Streamlit and other Python packages (without gmsh first)
+# Install Streamlit and other Python packages
 RUN pip3 install --no-cache-dir \
     streamlit==1.32.0 \
     matplotlib==3.8.3 \
@@ -26,8 +19,8 @@ RUN pip3 install --no-cache-dir \
     h5py==3.10.0 \
     xarray==2024.2.0
 
-# Install GMSH Python package separately with specific version
-RUN pip3 install --no-cache-dir gmsh>=4.11.0 --force-reinstall
+# Note: Using system GMSH via subprocess instead of Python package
+# This is more reliable and matches our actual usage pattern
 
 # Create app directory
 WORKDIR /app
