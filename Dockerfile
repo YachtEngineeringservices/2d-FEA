@@ -1,48 +1,44 @@
-# Dockerfile for DOLFINx + Streamlit deployment on Railway
+# Optimized Dockerfile for Railway deployment
 FROM dolfinx/dolfinx:v0.8.0
 
-# Install system dependencies and Python packages
-RUN apt-get update && apt-get install -y \
-    python3-pip \
+# Install only essential dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && rm -rf /var/cache/apt/*
 
-# Install Streamlit and other Python packages
-RUN pip3 install --no-cache-dir \
+# Install Python packages with minimal dependencies
+RUN pip3 install --no-cache-dir --no-deps \
     streamlit==1.32.0 \
     matplotlib==3.8.3 \
     pandas==2.2.1 \
-    numpy==1.26.4 \
-    scipy==1.12.0 \
     plotly==5.19.0 \
     meshio==5.3.4 \
     h5py==3.10.0 \
-    xarray==2024.2.0
-
-# Note: Using system GMSH via subprocess instead of Python package
-# This is more reliable and matches our actual usage pattern
+    xarray==2024.2.0 \
+    && pip3 cache purge
 
 # Create app directory
 WORKDIR /app
 
-# Copy application code
+# Copy application code (use .dockerignore to exclude unnecessary files)
 COPY src/ /app/src/
-COPY requirements_web.txt /app/
 
 # Set environment variables
-ENV PYTHONPATH=/app/src:$PYTHONPATH
-ENV STREAMLIT_SERVER_PORT=8501
-ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
-ENV STREAMLIT_SERVER_HEADLESS=true
+ENV PYTHONPATH=/app/src:$PYTHONPATH \
+    STREAMLIT_SERVER_PORT=8501 \
+    STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
+    STREAMLIT_SERVER_HEADLESS=true
 
-# Create output directory with proper permissions
-RUN mkdir -p /app/output && chmod 755 /app/output
+# Create output directory
+RUN mkdir -p /app/output
 
-# Expose Streamlit port (Railway uses PORT env var)
+# Expose port
 EXPOSE 8501
 
-# Health check for Railway
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# Minimal health check
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=2 \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
 
 # Command to run the app

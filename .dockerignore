@@ -1,0 +1,54 @@
+# Git and development files
+.git
+.gitignore
+*.md
+README.md
+DEPLOY_RAILWAY.md
+deploy_railway.sh
+railway.toml
+
+# Development and build files
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.DS_Store
+
+# Output and temporary files
+output/*
+*.msh
+*.h5
+*.xdmf
+*.pvd
+*.vtu
+fea_app.log
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Requirements files (already copied)
+requirements_desktop.txt
+requirements.txt
+
+# Test files
+test_*
+*_test.py
