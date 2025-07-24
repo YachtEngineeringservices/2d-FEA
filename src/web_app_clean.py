@@ -6,6 +6,8 @@ import matplotlib.tri as tri
 import logging
 import os
 from fea import meshing, solver
+from fea.multi_method_analysis import MultiMethodAnalysis
+from fea.mixed_section_analysis import MixedSectionAnalysis
 
 # Check GMSH availability early
 try:
@@ -51,6 +53,9 @@ def init_session_state():
     # Add state for mesh and solve separation
     if 'mesh_data' not in st.session_state: st.session_state.mesh_data = None
     if 'is_meshing' not in st.session_state: st.session_state.is_meshing = False
+    # Add state for plot caching
+    if 'cached_plot_data' not in st.session_state: st.session_state.cached_plot_data = None
+    if 'plot_cache_key' not in st.session_state: st.session_state.plot_cache_key = None
 
 def add_log_message(message):
     """Add a message to the log with timestamp"""
@@ -61,6 +66,33 @@ def add_log_message(message):
     # Keep only last 50 messages to prevent memory issues
     if len(st.session_state.log_messages) > 50:
         st.session_state.log_messages = st.session_state.log_messages[-50:]
+
+def clear_previous_results():
+    """Clear previous mesh data and results to prevent loops and stale data"""
+    add_log_message("🧹 Clearing previous mesh and results...")
+    
+    # Clear mesh data
+    if 'mesh_data' in st.session_state:
+        st.session_state.mesh_data = None
+    
+    # Clear results
+    if 'results' in st.session_state:
+        st.session_state.results = None
+    
+    # Reset calculation states
+    st.session_state.is_calculating = False
+    st.session_state.is_meshing = False
+    
+    # Clear any cached plot data
+    if 'plot_data' in st.session_state:
+        st.session_state.plot_data = None
+    
+    # Clear plot cache to force regeneration
+    if 'cached_plot_data' in st.session_state:
+        st.session_state.cached_plot_data = None
+        st.session_state.plot_cache_key = None
+    
+    add_log_message("✅ Previous data cleared - ready for new calculation")
 
 def get_geometry_bounds(outer_points, inner_points):
     """Calculates the bounding box of the entire geometry with a margin."""
@@ -82,6 +114,15 @@ def get_geometry_bounds(outer_points, inner_points):
 def main():
     """Main function to run the Streamlit application."""
     st.title("2D Torsional Analysis FEA")
+    
+    # Analysis method toggle at the top
+    st.subheader("🔧 Analysis Method")
+    analysis_method = st.radio(
+        "Choose analysis method:",
+        ["Mixed Method (Thin Structures)", "Saint-Venant FEA"],
+        index=0,
+        help="Mixed Method is recommended for thin-walled sections, FEA for thick/solid sections"
+    )
 
     # --- Sidebar for Inputs ---
     with st.sidebar:
@@ -156,28 +197,22 @@ def main():
             format="%.1f"
         )
         
-        # Update session state and calculate view bounds
-        if (zoom_level != st.session_state.zoom_level or 
-            pan_x != st.session_state.pan_x or 
-            pan_y != st.session_state.pan_y):
-            
-            st.session_state.zoom_level = zoom_level
-            st.session_state.pan_x = pan_x
-            st.session_state.pan_y = pan_y
-            
-            # Calculate view bounds based on zoom and pan
-            view_width = geometry_width / zoom_level
-            view_height = geometry_height / zoom_level
-            
-            center_x = geometry_center_x + pan_x
-            center_y = geometry_center_y + pan_y
-            
-            st.session_state.x_min = center_x - view_width / 2
-            st.session_state.x_max = center_x + view_width / 2
-            st.session_state.y_min = center_y - view_height / 2
-            st.session_state.y_max = center_y + view_height / 2
-            
-            st.rerun()
+        # Update session state - NO st.rerun() to avoid app refresh
+        st.session_state.zoom_level = zoom_level
+        st.session_state.pan_x = pan_x
+        st.session_state.pan_y = pan_y
+        
+        # Calculate view bounds based on zoom and pan
+        view_width = geometry_width / zoom_level
+        view_height = geometry_height / zoom_level
+        
+        center_x = geometry_center_x + pan_x
+        center_y = geometry_center_y + pan_y
+        
+        st.session_state.x_min = center_x - view_width / 2
+        st.session_state.x_max = center_x + view_width / 2
+        st.session_state.y_min = center_y - view_height / 2
+        st.session_state.y_max = center_y + view_height / 2
 
         st.header("Analysis Controls")
         mesh_size = st.number_input("Mesh Size [mm]:", value=1.0, min_value=0.1, max_value=50.0, step=0.1, format="%.2f")
@@ -193,34 +228,171 @@ def main():
             refinement_levels = 0
 
         st.header("Inputs")
-        g_modulus = st.number_input("Shear Modulus (G) [MPa]:", value=80e3, format="%e")
+        
+        # Wall thickness (for mixed method analysis)
+        wall_thickness_mm = st.slider("Wall Thickness (mm)", 
+                                     min_value=1.0, max_value=20.0, 
+                                     value=3.0, step=0.5,
+                                     help="Actual wall thickness of the structure (used for Mixed Method)")
+        
+        # === SANDWICH CONSTRUCTION SECTION ===
+        st.subheader("🥪 Construction Type")
+        construction_type = st.radio("Select construction:", 
+                                   ["Thin-wall (current geometry)", "Sandwich construction"],
+                                   help="Thin-wall uses current coordinates as-is. Sandwich calculates effective properties for laminated construction.")
+        
+        if construction_type == "Sandwich construction":
+            st.info("📐 **Note**: Your current geometry coordinates will be treated as the mid-plane. The app will calculate effective properties for the specified sandwich thickness.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Skin Properties:**")
+                skin_thickness = st.number_input("Skin thickness (each side) [mm]:", 
+                                               value=1.5, min_value=0.5, max_value=10.0, step=0.1,
+                                               help="Thickness of each composite skin")
+                skin_material = st.selectbox("Skin material:", 
+                                           ["Carbon Fiber Quasi-iso", "Carbon Fiber Conservative", "Glass Fiber"],
+                                           help="Skin material determines shear modulus")
+            
+            with col2:
+                st.write("**Core Properties:**")
+                core_thickness = st.number_input("Core thickness [mm]:", 
+                                               value=15.0, min_value=5.0, max_value=50.0, step=1.0,
+                                               help="Thickness of foam/honeycomb core")
+                core_material = st.selectbox("Core material:", 
+                                           ["PVC Foam (80 kg/m³)", "PVC Foam (100 kg/m³)", "Honeycomb"],
+                                           help="Core material affects shear transfer")
+            
+            # Calculate effective properties
+            def calculate_sandwich_properties(skin_thickness, core_thickness, skin_material, core_material):
+                # Skin material properties (GPa)
+                skin_G_map = {
+                    "Carbon Fiber Quasi-iso": 20.0,
+                    "Carbon Fiber Conservative": 5.5, 
+                    "Glass Fiber": 3.5
+                }
+                
+                # Core material properties (MPa)
+                core_G_map = {
+                    "PVC Foam (80 kg/m³)": 50.0,
+                    "PVC Foam (100 kg/m³)": 80.0,
+                    "Honeycomb": 200.0
+                }
+                
+                skin_thickness_m = skin_thickness * 1e-3
+                core_thickness_m = core_thickness * 1e-3
+                total_thickness = 2 * skin_thickness_m + core_thickness_m
+                
+                # Volume fractions
+                skin_fraction = (2 * skin_thickness_m) / total_thickness
+                core_fraction = core_thickness_m / total_thickness
+                
+                # Material properties
+                G_skin = skin_G_map[skin_material] * 1e9  # Convert to Pa
+                G_core = core_G_map[core_material] * 1e6   # Convert to Pa
+                
+                # Effective shear modulus for torsion (skins carry most load)
+                shear_efficiency = 0.1  # Core contributes ~10% for torsion
+                G_effective = skin_fraction * G_skin + core_fraction * G_core * shear_efficiency
+                
+                return {
+                    'total_thickness_mm': total_thickness * 1000,
+                    'skin_fraction': skin_fraction,
+                    'core_fraction': core_fraction,
+                    'G_effective_GPa': G_effective / 1e9,
+                    'G_effective_Pa': G_effective
+                }
+            
+            # Calculate and display properties
+            sandwich_props = calculate_sandwich_properties(skin_thickness, core_thickness, skin_material, core_material)
+            
+            # Display results
+            st.write("**📊 Calculated Properties:**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Thickness", f"{sandwich_props['total_thickness_mm']:.1f} mm")
+                st.metric("Skin Volume %", f"{sandwich_props['skin_fraction']*100:.1f}%")
+            with col2:
+                st.metric("Effective G", f"{sandwich_props['G_effective_GPa']:.2f} GPa")
+                # Calculate improvement over thin-wall material
+                base_G = 5.5 if skin_material == "Carbon Fiber Conservative" else 20.0 if skin_material == "Carbon Fiber Quasi-iso" else 3.5
+                G_improvement = sandwich_props['G_effective_GPa'] / base_G
+                st.metric("vs. Skin G", f"{G_improvement:.2f}x")
+            with col3:
+                st.metric("Core Volume %", f"{sandwich_props['core_fraction']*100:.1f}%")
+                if sandwich_props['G_effective_GPa'] > 10:
+                    st.success("🎯 High stiffness!")
+                elif sandwich_props['G_effective_GPa'] > 5:
+                    st.info("✅ Good properties")
+                else:
+                    st.warning("⚠️ Consider upgrade")
+            
+            # Use calculated effective modulus
+            g_modulus = sandwich_props['G_effective_Pa'] / 1e6  # Convert to MPa for input
+            
+        else:
+            # Traditional thin-wall construction
+            g_modulus = st.number_input("Shear Modulus (G) [MPa]:", value=20e3, format="%e", 
+                                       help="CF quasi-iso: ~20 GPa, CF conservative: ~5.5 GPa, Steel: ~80 GPa")
+            
+            # Material presets (only for thin-wall)
+            st.write("**Quick Material Presets:**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("CF Quasi-iso", help="Carbon fiber in-plane shear (20 GPa)"):
+                    g_modulus = 20e3  # 20 GPa
+                    st.rerun()
+            with col2:
+                if st.button("CF Conservative", help="Carbon fiber through-thickness (5.5 GPa)"):
+                    g_modulus = 5.5e3  # 5.5 GPa
+                    st.rerun()
+            with col3:
+                if st.button("Steel", help="Structural steel (80 GPa)"):
+                    g_modulus = 80e3  # 80 GPa  
+                    st.rerun()
         torque = st.number_input("Applied Torque (T) [N-m]:", value=1000.0)
         length = st.number_input("Beam Length (L) [m]:", value=2.0)
 
-        if st.button("Generate Mesh & Solve", type="primary", use_container_width=True):
+        # Check if any operation is currently in progress
+        is_busy = getattr(st.session_state, 'is_calculating', False) or getattr(st.session_state, 'is_meshing', False)
+        
+        if st.button("Generate Mesh & Solve", type="primary", use_container_width=True, disabled=is_busy):
+            # Clear previous data to prevent loops and stale results
+            clear_previous_results()
             st.session_state.is_calculating = True
-            st.session_state.log_messages = []  # Clear previous logs
-            add_log_message("Starting analysis...")
+            add_log_message("Starting complete analysis...")
             # Store refinement setting for the analysis
             st.session_state.refinement_levels = refinement_levels
+            # Store sandwich construction parameters
+            st.session_state.construction_type = construction_type
+            if construction_type == "Sandwich construction":
+                st.session_state.sandwich_props = sandwich_props
             st.rerun()
 
         # Separate mesh generation button
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("1️⃣ Generate Mesh", use_container_width=True):
+            if st.button("1️⃣ Generate Mesh", use_container_width=True, disabled=is_busy):
+                # Clear previous data to prevent mesh conflicts
+                clear_previous_results()
                 st.session_state.is_meshing = True
-                st.session_state.log_messages = []  # Clear previous logs
                 add_log_message("Starting mesh generation...")
                 st.session_state.refinement_levels = refinement_levels
                 st.rerun()
         
         with col2:
             mesh_available = st.session_state.mesh_data is not None
-            if st.button("2️⃣ Solve FEA", use_container_width=True, disabled=not mesh_available):
+            if st.button("2️⃣ Solve FEA", use_container_width=True, disabled=(not mesh_available or is_busy)):
                 if mesh_available:
-                    st.session_state.is_calculating = True
+                    # Clear previous results but keep mesh data
+                    if 'results' in st.session_state:
+                        st.session_state.results = None
+                    st.session_state.is_calculating = True   # Set for new calculation
                     add_log_message("Starting FEA solve with existing mesh...")
+                    # Store sandwich construction parameters for solve-only
+                    st.session_state.construction_type = construction_type
+                    if construction_type == "Sandwich construction":
+                        st.session_state.sandwich_props = sandwich_props
                     st.rerun()
                 else:
                     st.warning("Please generate mesh first!")
@@ -247,56 +419,381 @@ def main():
         
         # Check if calculation should start
         if st.session_state.is_calculating and not st.session_state.results:
-            if st.session_state.mesh_data:
-                # Use existing mesh
-                add_log_message("Using existing mesh for FEA solve...")
-                results = solve_with_existing_mesh(st.session_state.mesh_data, g_modulus, torque, length)
-            else:
-                # Full analysis (mesh + solve)
-                add_log_message("Validating geometry...")
-                refinement_levels = getattr(st.session_state, 'refinement_levels', 2)
-                results = run_analysis(st.session_state.outer_points, st.session_state.inner_points, 
-                                     mesh_size, g_modulus, torque, length, refinement_levels)
-            
-            if results:
-                st.session_state.results = results
-                add_log_message("Analysis completed successfully!")
-            else:
-                add_log_message("Analysis failed. Please check geometry and parameters.")
-            st.session_state.is_calculating = False
-            st.rerun()
+            try:
+                if st.session_state.mesh_data:
+                    # Use existing mesh
+                    add_log_message("Using existing mesh for FEA solve...")
+                    results = solve_with_existing_mesh(st.session_state.mesh_data, g_modulus, torque, length)
+                else:
+                    # Full analysis (mesh + solve)
+                    add_log_message("Validating geometry...")
+                    refinement_levels = getattr(st.session_state, 'refinement_levels', 2)
+                    results = run_analysis(st.session_state.outer_points, st.session_state.inner_points, 
+                                         mesh_size, g_modulus, torque, length, refinement_levels)
+                
+                if results:
+                    st.session_state.results = results
+                    # Clear plot cache since we have new results
+                    st.session_state.cached_plot_data = None
+                    st.session_state.plot_cache_key = None
+                    add_log_message("Analysis completed successfully!")
+                    # Add debug info for total deflection
+                    if results.get('u') is not None and results.get('theta') is not None:
+                        u = results['u']
+                        theta = results['theta']
+                        coords = u.function_space.tabulate_dof_coordinates()[:, :2]
+                        coords_mm = coords * 1000
+                        
+                        # Calculate maximum radial distance and total deflection
+                        centroid_x = np.mean(coords_mm[:, 0])
+                        centroid_y = np.mean(coords_mm[:, 1])
+                        dx = coords_mm[:, 0] - centroid_x
+                        dy = coords_mm[:, 1] - centroid_y
+                        max_radius_mm = np.sqrt(dx**2 + dy**2).max()
+                        max_total_deflection_mm = theta * max_radius_mm
+                        
+                        add_log_message(f"DEBUG: Max total deflection: {max_total_deflection_mm:.2f} mm")
+                        add_log_message(f"DEBUG: Max radius from centroid: {max_radius_mm:.2f} mm")
+                else:
+                    add_log_message("Analysis failed. Please check geometry and parameters.")
+            except Exception as e:
+                add_log_message(f"Error during calculation: {str(e)}")
+                st.session_state.results = None
+            finally:
+                # Always reset the calculating flag to prevent loops
+                st.session_state.is_calculating = False
         
-        # Pass zoom state to the plotting function
-        fig = plot_stress_distribution(
-            st.session_state.results, 
-            st.session_state.outer_points, 
-            st.session_state.inner_points,
-            xlim=(st.session_state.x_min, st.session_state.x_max),
-            ylim=(st.session_state.y_min, st.session_state.y_max),
-            mesh_data=st.session_state.mesh_data  # Pass mesh data for visualization
-        )
-        st.pyplot(fig, use_container_width=True)
+        # Conditional plot based on analysis method
+        if analysis_method == "Mixed Method (Thin Structures)" and st.session_state.results:
+            # Show mixed method stress plot
+            try:
+                outer_points_m = [(p[0]/1000, p[1]/1000) for p in st.session_state.outer_points]
+                inner_points_m = [(p[0]/1000, p[1]/1000) for p in st.session_state.inner_points] if st.session_state.inner_points else []
+                wall_thickness_m = wall_thickness_mm / 1000
+                
+                mixed_analyzer = MixedSectionAnalysis(outer_points_m, inner_points_m, wall_thickness_m)
+                mixed_results = mixed_analyzer.analyze_mixed_section(
+                    G=g_modulus * 1e6,  # Convert MPa to Pa for proper units
+                    T=torque,
+                    L=length
+                )
+                
+                if 'total' in mixed_results and mixed_results['total']:
+                    stress_fig = mixed_analyzer.create_stress_plot(mixed_results, torque)
+                    st.pyplot(stress_fig, use_container_width=True)
+                else:
+                    st.error("Mixed section analysis failed - showing FEA plot")
+                    fig = plot_stress_distribution(
+                        st.session_state.results,
+                        st.session_state.outer_points,
+                        st.session_state.inner_points,
+                        xlim=(st.session_state.x_min, st.session_state.x_max),
+                        ylim=(st.session_state.y_min, st.session_state.y_max),
+                        mesh_data=st.session_state.mesh_data
+                    )
+                    st.pyplot(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Mixed method plot failed: {e} - showing FEA plot")
+                fig = plot_stress_distribution(
+                    st.session_state.results,
+                    st.session_state.outer_points,
+                    st.session_state.inner_points,
+                    xlim=(st.session_state.x_min, st.session_state.x_max),
+                    ylim=(st.session_state.y_min, st.session_state.y_max),
+                    mesh_data=st.session_state.mesh_data
+                )
+                st.pyplot(fig, use_container_width=True)
+        else:
+            # Show FEA stress plot
+            fig = plot_stress_distribution(
+                st.session_state.results,
+                st.session_state.outer_points,
+                st.session_state.inner_points,
+                xlim=(st.session_state.x_min, st.session_state.x_max),
+                ylim=(st.session_state.y_min, st.session_state.y_max),
+                mesh_data=st.session_state.mesh_data
+            )
+            st.pyplot(fig, use_container_width=True)
 
     with col2:
         st.header("Results")
         if st.session_state.results:
             results = st.session_state.results
-            J_mm4 = results['J'] * (1000**4)
-            st.metric("Torsional Constant (J)", f"{J_mm4:.4e} mm⁴")
-            st.metric("Torsional Stiffness (k)", f"{results['k']:.4e} Nm/rad")
-            st.metric("Angle of Twist (θ)", f"{np.rad2deg(results['theta']):.4f} deg")
-            st.metric("Max Shear Stress (τ_max)", f"{results['tau_max']/1e6:.2f} MPa")
             
-            # Add solver information
+            # Conditional Analysis based on toggle
+            if analysis_method == "Mixed Method (Thin Structures)":
+                # Mixed Section Analysis
+                st.subheader("🎯 Mixed Section Analysis")
+                try:
+                    # Get current geometry
+                    outer_points_m = [(p[0]/1000, p[1]/1000) for p in st.session_state.outer_points]
+                    inner_points_m = [(p[0]/1000, p[1]/1000) for p in st.session_state.inner_points] if st.session_state.inner_points else []
+                    
+                    wall_thickness_m = wall_thickness_mm / 1000
+                    
+                    # Run mixed section analysis
+                    mixed_analyzer = MixedSectionAnalysis(outer_points_m, inner_points_m, wall_thickness_m)
+                    mixed_results = mixed_analyzer.analyze_mixed_section(
+                        G=g_modulus * 1e6,  # Convert MPa to Pa for proper units
+                        T=torque,
+                        L=length
+                    )
+                    
+                    # Display mixed section results in standardized format
+                    if 'total' in mixed_results and mixed_results['total']:
+                        total = mixed_results['total']
+                        geometry = mixed_results.get('geometry', {})
+                        
+                        # Get area from geometry (should be in m²)
+                        area_m2 = geometry.get('area', 0)
+                        if area_m2 == 0:
+                            # Fallback: calculate area from FEA results
+                            area_m2 = results.get('area', 0)
+                        area_mm2 = area_m2 * 1e6  # Convert m² to mm²
+                        
+                        # Standardized metrics format (same as FEA)
+                        st.metric("Cross-sectional Area", f"{area_mm2:.2f} mm²")
+                        
+                        J_mm4 = total['J'] * 1e12  # Convert m⁴ to mm⁴
+                        st.metric("Torsional Constant (J)", f"{J_mm4:.4e} mm⁴")
+                        
+                        # UNIT CONVERSION FIX: Convert G from MPa to Pa for proper units
+                        g_modulus_pa = g_modulus * 1e6  # Convert MPa to Pa (N/m²)
+                        k_value = total.get('k', total['J'] * g_modulus_pa)  # G*J in N⋅m/rad (J in m⁴, G in N/m²)
+                        st.metric("Torsional Stiffness (k)", f"{k_value:.4e} N⋅m/rad")
+                        
+                        # Calculate angle: θ = TL/(GJ) in radians, then convert to degrees
+                        theta_rad_corrected = torque * length / k_value
+                        theta_deg_corrected = np.rad2deg(theta_rad_corrected)
+                        st.metric("Angle of Twist (θ)", f"{theta_deg_corrected:.6f} deg")
+                        
+                        # Get stress data from mixed_results
+                        stress_data = mixed_results.get('stress_analysis', {})
+                        max_stress_mpa = stress_data.get('max_stress_value', 0) / 1e6 if stress_data.get('max_stress_value') else 0
+                        st.metric("Max Shear Stress", f"{max_stress_mpa:.2f} MPa")
+                        
+                        # FIXED: Calculate deflection using radians (not degrees)
+                        # Maximum deflection = θ (radians) × max_radius
+                        if st.session_state.outer_points:
+                            coords_mm = np.array(st.session_state.outer_points)
+                            centroid_x = np.mean(coords_mm[:, 0])
+                            centroid_y = np.mean(coords_mm[:, 1])
+                            dx = coords_mm[:, 0] - centroid_x
+                            dy = coords_mm[:, 1] - centroid_y
+                            max_radius_mm = np.sqrt(dx**2 + dy**2).max()
+                            max_deflection_mm = theta_rad_corrected * max_radius_mm  # Use radians!
+                            st.metric("Max Total Deflection", f"{max_deflection_mm:.2f} mm")
+                        
+                        # Engineering guidance
+                        if max_stress_mpa > 0:
+                            st.info(f"""
+                            **🔥 Peak Stress Analysis:**
+                            - Maximum shear stress: **{max_stress_mpa:.2f} MPa**
+                            - Wall thickness: {wall_thickness_mm} mm
+                            
+                            **Engineering Notes:**
+                            - Closed sections have constant stress around perimeter
+                            - Open sections have peak stress at constraint points
+                            - Consider local reinforcement at high-stress areas
+                            """)
+                        
+                        # Engineering recommendation
+                        thickness_ratio = wall_thickness_m / 1.4  # Approximate characteristic dimension
+                        if thickness_ratio < 0.01:
+                            st.success("✅ **Analysis Validity**: Excellent for this very thin-walled geometry")
+                        elif thickness_ratio < 0.05:
+                            st.success("✅ **Analysis Validity**: Good for this thin-walled geometry")
+                        else:
+                            st.warning("⚠️ **Analysis Validity**: Consider FEA method for thicker sections")
+                    
+                    else:
+                        st.error("Mixed section analysis failed")
+                        
+                except Exception as e:
+                    st.error(f"Mixed section analysis failed: {e}")
+            
+            else:  # Saint-Venant FEA
+                # FEA Method Analysis
+                st.subheader("🔬 Saint-Venant FEA Analysis")
+                
+                # Display FEA results in standardized format
+                area_mm2 = results['area'] * 1e6  # Convert m² to mm²
+                st.metric("Cross-sectional Area", f"{area_mm2:.2f} mm²")
+                
+                J_mm4 = results['J'] * 1e12  # Convert m⁴ to mm⁴ 
+                st.metric("Torsional Constant (J)", f"{J_mm4:.4e} mm⁴")
+                
+                st.metric("Torsional Stiffness (k)", f"{results['k']:.4e} N⋅m/rad")
+                st.metric("Angle of Twist (θ)", f"{np.rad2deg(results['theta']):.6f} deg")
+                st.metric("Max Shear Stress", f"{results['tau_max']/1e6:.2f} MPa")
+                
+                # FIXED: Calculate deflection using radians (not degrees)
+                # Maximum deflection = θ (radians) × max_radius
+                if st.session_state.outer_points:
+                    coords_mm = np.array(st.session_state.outer_points)
+                    centroid_x = np.mean(coords_mm[:, 0])
+                    centroid_y = np.mean(coords_mm[:, 1])
+                    dx = coords_mm[:, 0] - centroid_x
+                    dy = coords_mm[:, 1] - centroid_y
+                    max_radius_mm = np.sqrt(dx**2 + dy**2).max()
+                    max_deflection_mm = results['theta'] * max_radius_mm  # Use radians!
+                    st.metric("Max Total Deflection", f"{max_deflection_mm:.2f} mm")
+                
+                # === ENGINEERING ASSESSMENT ===
+                st.subheader("🔧 Engineering Assessment")
+                
+                # Get construction type for proper assessment
+                construction_type = getattr(st.session_state, 'construction_type', "Thin-wall (current geometry)")
+                
+                # Twist angle assessment
+                twist_deg = np.rad2deg(results['theta'])
+                if twist_deg < 1.0:
+                    twist_status = "🎯 **EXCELLENT** - Suitable for precision applications"
+                elif twist_deg < 5.0:
+                    twist_status = "✅ **GOOD** - Acceptable for most structural applications"
+                elif twist_deg < 15.0:
+                    twist_status = "⚠️ **MARGINAL** - May need stiffening for critical loads"
+                else:
+                    twist_status = "❌ **POOR** - Requires structural redesign or stiffening"
+                
+                # J value assessment based on construction type
+                if construction_type == "Sandwich construction":
+                    j_status = "✅ **SANDWICH** - Enhanced properties applied"
+                else:
+                    # Thin-wall assessment
+                    thickness_ratio = wall_thickness_mm / 1400  # Approximate thickness ratio
+                    if thickness_ratio < 0.01:
+                        j_status = "⚠️ **THIN-WALL** - FEA may overestimate stiffness for very thin sections"
+                    elif thickness_ratio < 0.05:
+                        j_status = "ℹ️ **THIN-WALL** - Consider Mixed Method for comparison"
+                    else:
+                        j_status = "✅ **APPROPRIATE** - FEA suitable for this thickness ratio"
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Twist Performance:**")
+                    st.write(twist_status)
+                    st.write(f"Angle: {twist_deg:.3f}° for {torque:.0f} Nm")
+                
+                with col2:
+                    st.write("**Structural Analysis:**")
+                    st.write(j_status)
+                    if construction_type == "Sandwich construction":
+                        st.write(f"Construction: {construction_type}")
+                    else:
+                        st.write(f"Wall thickness: {wall_thickness_mm:.1f} mm")
+            
+            # Full Multi-Method Analysis (in expander)
+            with st.expander("🔬 Detailed Multi-Method Comparison", expanded=False):
+                try:
+                    # Get current geometry
+                    outer_points_m = [(p[0]/1000, p[1]/1000) for p in st.session_state.outer_points]
+                    inner_points_m = [(p[0]/1000, p[1]/1000) for p in st.session_state.inner_points] if st.session_state.inner_points else []
+                    
+                    # Initialize multi-method analysis
+                    multi_analysis = MultiMethodAnalysis(outer_points_m, inner_points_m)
+                    
+                    # Run all methods with current parameters
+                    multi_results = multi_analysis.analyze_all_methods(
+                        G=g_modulus,  # Already in Pa from input conversion
+                        T=torque,
+                        L=length,
+                        fea_J=results['J']
+                    )
+                    
+                    # Display comparison table
+                    comparison_data = []
+                    for method_name, method_data in multi_results.items():
+                        if method_name in ['geometry', 'comparison']:
+                            continue
+                        
+                        if 'J' in method_data and method_data['J'] is not None:
+                            comparison_data.append({
+                                'Method': method_data.get('method', method_name.upper()),
+                                'J (m⁴)': f"{method_data['J']:.4e}",
+                                'J (mm⁴)': f"{method_data['J']*1e12:.4e}",
+                                'θ (deg)': f"{method_data.get('theta_deg', 0):.3f}",
+                                'τ_max (MPa)': f"{method_data.get('max_shear_stress', 0)/1e6:.1f}"
+                            })
+                        else:
+                            comparison_data.append({
+                                'Method': method_data.get('method', method_name.upper()),
+                                'J (m⁴)': method_data.get('note', 'Failed'),
+                                'J (mm⁴)': '-',
+                                'θ (deg)': '-',
+                                'τ_max (MPa)': '-'
+                            })
+                    
+                    if comparison_data:
+                        df = pd.DataFrame(comparison_data)
+                        st.dataframe(df, use_container_width=True)
+                
+                except Exception as e:
+                    st.error(f"Multi-method analysis failed: {e}")
+                    st.info("Showing basic FEA results only.")
+            
+            # Add debugging information
+            st.info(f"""
+            **🔍 Calculation Check:**
+            - Area = {results['area']:.6f} m² = {results['area']*1e6:.2f} mm²
+            - J = {results['J']:.4e} m⁴
+            - G = {g_modulus:.0f} MPa = {g_modulus*1e6:.4e} Pa  
+            - L = {length:.1f} m
+            - T = {torque:.0f} Nm
+            - k = G×J/L = {results['k']:.4e} Nm/rad
+            - θ = T/k = {np.rad2deg(results['theta']):.2f}° = {results['theta']:.4f} rad
+            """)
+            
+            # Add solver information with explanation
             st.info("""
-            **ℹ️ Solver Information:**
+            **ℹ️ Understanding the Results:**
             
-            This web app uses **DOLFINx FEA** which solves the full torsion equations with proper boundary conditions. 
+            • **Angle of Twist (θ)**: Total angular rotation of the shaft over its length L
+            • **Total Deflection**: Circumferential displacement = θ × radius from center
+            • **Shear Stress**: In-plane stress causing the torsion
             
-            The stress distribution shows highest values where geometry changes create stress concentrations, which is physically accurate.
+            **Beam Constraints:**
+            • One end fixed, other end has applied torque T = {T} Nm
+            • Cross-section free to warp (no constraint on out-of-plane displacement)
+            • Analysis assumes uniform twist along length L = {L} m
+            
+            **Note**: This is a 2D cross-sectional analysis using classical torsion theory.
+            
+            This web app uses **DOLFINx FEA** which solves the full torsion equations with proper boundary conditions.
             
             *Note: Results may differ from simplified analytical methods that assume circular shaft behavior.*
             """)
+            
+            # Add expandable physics explanation
+            with st.expander("📚 Understanding Torsion Results"):
+                st.markdown("""
+                **Warping Visualization Explained:**
+                
+                The warping visualization shows how the cross-section deforms out-of-plane during torsion:
+                
+                **What you're seeing:**
+                - **Contour Colors**: Show the magnitude of out-of-plane displacement
+                - **Red Circles**: Points that move outward from the cross-section plane (+)
+                - **Blue Circles**: Points that move inward from the cross-section plane (-)
+                - **Circle Size**: Proportional to the amount of warping displacement
+                
+                **Physical Meaning:**
+                - Non-circular cross-sections cannot remain flat during torsion
+                - Different parts of the cross-section move different amounts perpendicular to the plane
+                - This warping allows the development of shear stresses needed to carry torque
+                - The warping pattern is unique to each cross-section geometry
+                
+                **Key Insight:**
+                - Circular sections don't warp (they remain flat)
+                - Rectangular and complex sections warp significantly
+                - Warping enables non-circular sections to carry torsional loads
+                - The warping displacements are typically very small but structurally important
+                
+                This visualization helps understand why torsional behavior differs between circular and non-circular cross-sections!
+                
+                **Note**: For a full 3D solid analysis, you'd need a 3D mesh with proper end constraints, 
+                but that would be computationally intensive for a web app.
+                """)
         else:
             st.text("Torsional Constant (J): Not calculated")
             st.text("Torsional Stiffness (k): Not calculated")
@@ -383,9 +880,10 @@ def run_analysis(outer_points, inner_points, mesh_size, G, T, L, refinement_leve
         add_log_message("Assembling system matrices...")
         add_log_message("Solving linear system...")
         
-        J, k, theta, tau_max, tau_magnitude, V_mag = solver.solve_torsion(mesh_dir, G_Pa, T, L)
+        J, k, theta, tau_max, tau_magnitude, V_mag, u, area = solver.solve_torsion(mesh_dir, G_Pa, T, L)
         
         add_log_message("Calculating torsional properties...")
+        add_log_message(f"Cross-sectional area = {area:.6f} m² = {area*1e6:.2f} mm²")
         add_log_message(f"Torsional constant J = {J:.4e} m⁴")
         add_log_message(f"Torsional stiffness k = {k:.4e} Nm/rad")
         add_log_message(f"Angle of twist θ = {np.rad2deg(theta):.4f} degrees")
@@ -394,7 +892,8 @@ def run_analysis(outer_points, inner_points, mesh_size, G, T, L, refinement_leve
         
         return {
             "J": J, "k": k, "theta": theta, "tau_max": tau_max,
-            "tau_magnitude": tau_magnitude, "V_mag": V_mag
+            "tau_magnitude": tau_magnitude, "V_mag": V_mag,
+            "u": u, "area": area
         }
 
     except Exception as e:
@@ -493,9 +992,10 @@ def solve_with_existing_mesh(mesh_data, G, T, L):
         add_log_message("Assembling system matrices...")
         add_log_message("Solving linear system...")
         
-        J, k, theta, tau_max, tau_magnitude, V_mag = solver.solve_torsion(mesh_dir, G_Pa, T, L)
+        J, k, theta, tau_max, tau_magnitude, V_mag, u, area = solver.solve_torsion(mesh_dir, G_Pa, T, L)
         
         add_log_message("Calculating torsional properties...")
+        add_log_message(f"Cross-sectional area = {area:.6f} m² = {area*1e6:.2f} mm²")
         add_log_message(f"Torsional constant J = {J:.4e} m⁴")
         add_log_message(f"Torsional stiffness k = {k:.4e} Nm/rad")
         add_log_message(f"Angle of twist θ = {np.rad2deg(theta):.4f} degrees")
@@ -504,7 +1004,8 @@ def solve_with_existing_mesh(mesh_data, G, T, L):
         
         return {
             "J": J, "k": k, "theta": theta, "tau_max": tau_max,
-            "tau_magnitude": tau_magnitude, "V_mag": V_mag
+            "tau_magnitude": tau_magnitude, "V_mag": V_mag,
+            "u": u, "area": area
         }
         
     except Exception as e:
@@ -515,7 +1016,32 @@ def plot_stress_distribution(results, outer_points, inner_points, xlim=None, yli
     """
     Plots the stress distribution using Matplotlib for high-quality rendering.
     If only mesh_data is provided (no results), shows mesh visualization.
+    Uses caching to improve zoom/pan performance.
     """
+    
+    # Create cache key for expensive operations
+    cache_key = None
+    if results and results.get("tau_magnitude") is not None:
+        # Simple cache key based on results object id and geometry
+        cache_key = f"{id(results.get('tau_magnitude'))}_{len(outer_points)}_{len(inner_points)}"
+        
+        # Check if we can reuse cached triangulation data
+        if (hasattr(st.session_state, 'plot_cache_key') and 
+            st.session_state.plot_cache_key == cache_key and
+            st.session_state.cached_plot_data is not None):
+            
+            # Use cached data
+            cached_data = st.session_state.cached_plot_data
+            coords_mm = cached_data['coords_mm']
+            stress_values_mpa = cached_data['stress_values_mpa']
+            triangulation = cached_data['triangulation']
+            max_stress_val = cached_data['max_stress_val']
+            use_cached = True
+        else:
+            use_cached = False
+    else:
+        use_cached = False
+    
     # Create figure with specific size and tight layout
     fig, ax = plt.subplots(figsize=(14, 10))
     
@@ -531,59 +1057,39 @@ def plot_stress_distribution(results, outer_points, inner_points, xlim=None, yli
     for spine in ax.spines.values():
         spine.set_edgecolor('white')
 
-    # Check what to plot
+    # Plot stress results
     if results and results.get("tau_magnitude") is not None and results.get("V_mag") is not None:
-        # Plot stress results
-        tau_magnitude = results["tau_magnitude"]
-        V_mag = results["V_mag"]
         
-        mesh = V_mag.mesh
-        coords = V_mag.tabulate_dof_coordinates()[:, :2]
-        stress_values_pa = tau_magnitude.x.array
-        
-        coords_mm = coords * 1000
-        stress_values_mpa = stress_values_pa / 1e6
-        
-        # Debug information using logging and session state
-        add_log_message(f"DEBUG: Coordinate range - X: [{coords_mm[:, 0].min():.1f}, {coords_mm[:, 0].max():.1f}], Y: [{coords_mm[:, 1].min():.1f}, {coords_mm[:, 1].max():.1f}]")
-        add_log_message(f"DEBUG: Stress value range: [{stress_values_mpa.min():.2f}, {stress_values_mpa.max():.2f}] MPa")
-        add_log_message(f"DEBUG: Number of nodes: {len(coords_mm)}")
-        
-        # Check if there are stress values in the left side of the geometry
-        # From the plot, left side appears to be around X < -650mm
-        left_side_mask = coords_mm[:, 0] < -600  # Points more left than -600mm
-        if np.any(left_side_mask):
-            left_stress_values = stress_values_mpa[left_side_mask]
-            add_log_message(f"DEBUG: Left side ({np.sum(left_side_mask)} nodes) stress range: [{left_stress_values.min():.2f}, {left_stress_values.max():.2f}] MPa")
-            # Check if there are any non-zero stress values on the left
-            nonzero_left = left_stress_values[left_stress_values > 0.01]
-            if len(nonzero_left) > 0:
-                add_log_message(f"DEBUG: Non-zero left side stress values: {len(nonzero_left)} nodes, max: {nonzero_left.max():.2f} MPa")
-            else:
-                add_log_message("DEBUG: All left side stress values are near zero!")
+        if not use_cached:
+            # Expensive operations - only do once and cache
+            tau_magnitude = results["tau_magnitude"]
+            V_mag = results["V_mag"]
+            mesh = V_mag.mesh
+            coords = V_mag.tabulate_dof_coordinates()[:, :2]
+            stress_values_pa = tau_magnitude.x.array
+            coords_mm = coords * 1000
+            stress_values_mpa = stress_values_pa / 1e6
+            
+            # Reduced debug logging - only log summary info
+            add_log_message(f"📊 Mesh: {len(coords_mm)} nodes, Stress: {stress_values_mpa.min():.2f}-{stress_values_mpa.max():.2f} MPa")
+            
+            # Create triangulation (expensive operation)
+            triangulation = tri.Triangulation(coords_mm[:, 0], coords_mm[:, 1])
+            max_stress_val = np.max(stress_values_mpa)
+            
+            # Cache the expensive data
+            st.session_state.cached_plot_data = {
+                'coords_mm': coords_mm,
+                'stress_values_mpa': stress_values_mpa,
+                'triangulation': triangulation,
+                'max_stress_val': max_stress_val
+            }
+            st.session_state.plot_cache_key = cache_key
+            add_log_message("💾 Plot data cached for fast zoom/pan")
         else:
-            add_log_message("DEBUG: No nodes found on the left side (X < -600mm)")
+            add_log_message("⚡ Using cached plot data for fast rendering")
         
-        # Also check the geometry bounds to understand coordinate system
-        if outer_points:
-            outer_array = np.array(outer_points)
-            add_log_message(f"DEBUG: Outer geometry range - X: [{outer_array[:, 0].min():.1f}, {outer_array[:, 0].max():.1f}], Y: [{outer_array[:, 1].min():.1f}, {outer_array[:, 1].max():.1f}]")
-        
-        topology = mesh.topology
-        cells = topology.connectivity(topology.dim, 0).array.reshape(-1, 3)
-
-        # The DOLFINx triangulation was missing the left side - use Delaunay instead
-        triangulation = tri.Triangulation(coords_mm[:, 0], coords_mm[:, 1])
-
-        # Debug triangulation
-        add_log_message(f"Triangulation created with {len(triangulation.triangles)} triangles")
-        
-        # Check triangle coverage
-        triangle_centers = coords_mm[triangulation.triangles].mean(axis=1)
-        left_triangles_500 = triangle_centers[:, 0] < -500
-        add_log_message(f"Left side triangles (X < -500): {np.sum(left_triangles_500)} out of {len(triangulation.triangles)}")
-        
-        # Now apply masking to show plot only within the geometry boundaries
+        # Apply geometry masking (relatively fast operation)
         from matplotlib.path import Path
         if outer_points:
             outer_path = Path(np.array(outer_points))
@@ -596,43 +1102,16 @@ def plot_stress_distribution(results, outer_points, inner_points, xlim=None, yli
                 mask = np.logical_or(mask, inner_mask)
             
             triangulation.set_mask(mask)
-            add_log_message(f"DEBUG: Applied geometry mask - {np.sum(mask)} triangles masked out")
-        else:
-            add_log_message("DEBUG: No masking applied - no outer geometry defined")
 
-        # Temporarily disable masking to debug the left-side issue
-        # TODO: The masking logic might be incorrectly hiding stress results on the left side
-        # Let's show all triangles first to see if stress values exist everywhere
-        
-        # # Masking to show plot only within the geometry
-        # from matplotlib.path import Path
-        # if outer_points:
-        #     outer_path = Path(np.array(outer_points))
-        #     triangle_centers = coords_mm[triangulation.triangles].mean(axis=1)
-        #     mask = ~outer_path.contains_points(triangle_centers)
-        #     
-        #     if len(inner_points) >= 3:
-        #         inner_path = Path(np.array(inner_points))
-        #         inner_mask = inner_path.contains_points(triangle_centers)
-        #         mask = np.logical_or(mask, inner_mask)
-        #     
-        #     triangulation.set_mask(mask)
-
-        # Use tricontourf for smooth, high-quality plot with more levels
-        # Ensure contour levels include the full range including near-zero values
+        # Create contour plot with optimized levels
         min_stress = stress_values_mpa.min()
         max_stress = stress_values_mpa.max()
-        
-        # Create explicit levels to ensure low stress values are visible
-        levels = np.linspace(min_stress, max_stress, 51)  # 51 levels from min to max
-        add_log_message(f"DEBUG: Contour levels from {min_stress:.3f} to {max_stress:.3f} MPa")
+        levels = np.linspace(min_stress, max_stress, 31)  # Reduced from 51 to 31 levels
         
         try:
             contour = ax.tricontourf(triangulation, stress_values_mpa, levels=levels, cmap='jet', zorder=2)
-            add_log_message("DEBUG: tricontourf successful")
         except Exception as e:
-            add_log_message(f"DEBUG: tricontourf failed: {e}")
-            # Fallback to scatter plot to see if points exist
+            add_log_message(f"⚠️ Contour plot failed: {e} - using scatter plot")
             scatter = ax.scatter(coords_mm[:, 0], coords_mm[:, 1], c=stress_values_mpa, cmap='jet', s=1, zorder=2)
             contour = scatter
         
@@ -640,7 +1119,6 @@ def plot_stress_distribution(results, outer_points, inner_points, xlim=None, yli
         cbar.set_label('Shear Stress (MPa)', color='white')
         cbar.ax.tick_params(colors='white')
 
-        max_stress_val = np.max(stress_values_mpa)
         ax.set_title(f"Shear Stress Distribution\nMax Stress: {max_stress_val:.2f} MPa", fontsize=14)
         
     elif mesh_data:

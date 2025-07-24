@@ -32,7 +32,7 @@ set -e\n\
 unset STREAMLIT_SERVER_PORT\n\
 unset STREAMLIT_SERVER_ADDRESS\n\
 unset STREAMLIT_SERVER_HEADLESS\n\
-PORT=${PORT:-8501}\n\
+PORT=${PORT:-8080}\n\
 echo "Starting Streamlit on port $PORT"\n\
 echo "Available environment variables:"\n\
 env | grep -E "(PORT|STREAMLIT)" || true\n\
@@ -46,11 +46,11 @@ ENV PYTHONPATH=/app/src:$PYTHONPATH
 RUN mkdir -p /app/output
 
 # Expose port
-EXPOSE 8501
+EXPOSE 8080
 
 # Minimal health check (use static port for health check)
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=2 \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+    CMD curl -f http://localhost:8080/_stcore/health || exit 1
 
 # Command to run the app
 CMD ["/app/start.sh"]
